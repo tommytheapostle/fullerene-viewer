@@ -4,16 +4,15 @@
 (function () {
   'use strict';
 
-  const NO_IPR = new Set([21, 22, 23, 24]);          // spec: no IPR fullerene exists at all
-  const NO_ADMISSIBLE = new Set([26, 53, 54, 56, 57, 58, 59]); // spec: no admissible isomer
   const ICOSAHEDRAL_N = new Set([20, 30, 60]); // the 3 isohedral cases (rho = iota = 1 exactly)
 
   const state = {
     n: 20,
-    fullerene: null,          // canonicalized Poly, pentagon/hexagon faces (reconstructed)
-    contracted: null,         // {poly, mapping, counts, admissible, poleCount, keptCount} loaded C(n)
+    fullerene: null,          // reconstructed fullerene Poly, or null when unreconstructable
+    contracted: null,         // {poly, mapping, counts, admissible, poleCount, keptCount, inv, fvC, fsv, sumCheck}
     contractedOn: false,      // are we currently showing C(n)?
-    animating: false
+    animating: false,
+    invalid: null             // null | {type: 'nonIsolatedPentagons'|'isolatedHexagons', m}
   };
 
   const $ = id => document.getElementById(id);
@@ -44,20 +43,31 @@
     return 'C_1 (generic isomer)';
   }
 
+  function invalidMsg(invalid) {
+    if (!invalid) return '';
+    const label = invalid.type === 'nonIsolatedPentagons' ? 'non-isolated pentagons' : 'isolated hexagons';
+    return `invalid: ${label}: ${invalid.m}`;
+  }
+
   // ---------------------------------------------------------------------------
   // Generation — load C(n) directly from the published, pre-solved coordinate
-  // table (catalan_data.js), then reconstruct the underlying fullerene by
-  // expanding each pole back into a pentagon (for the "contract poles" toggle).
+  // table (catalan_data.js / catalan_invalid_data.js), then reconstruct the
+  // underlying fullerene by expanding each pole back into a pentagon (for the
+  // "contract poles" toggle). Reconstruction is only attempted when every pole
+  // is a normal degree-5 vertex — an "isolated hexagons" isomer still has 12 of
+  // those, but a "non-isolated pentagons" one doesn't (two of its poles are
+  // directly edge-adjacent to each other), so that case is shown as C(n) only.
   // ---------------------------------------------------------------------------
   function reasonForN(n) {
-    if (NO_IPR.has(n)) return 'No IPR fullerene exists at all for this n — pole contraction is undefined.';
-    if (NO_ADMISSIBLE.has(n)) return 'No admissible isomer is known for this n — every IPR fullerene retains an isolated hexagon.';
-    if (!window.CATALAN_TABLE[String(n)]) return 'No published coordinates for this n.';
-    return '';
+    if (window.CATALAN_TABLE[String(n)]) return '';
+    if (window.CATALAN_INVALID_TABLE && window.CATALAN_INVALID_TABLE[String(n)]) return '';
+    return 'No published coordinates for this n yet.';
   }
 
   function generate(n) {
-    const entry = window.CATALAN_TABLE[String(n)];
+    const validEntry = window.CATALAN_TABLE[String(n)];
+    const invalidEntry = window.CATALAN_INVALID_TABLE && window.CATALAN_INVALID_TABLE[String(n)];
+    const entry = validEntry || invalidEntry;
     if (!entry) { setMsg(reasonForN(n) || `No data for n=${n}.`, true); return; }
 
     const cVerts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
@@ -67,25 +77,38 @@
     const fvC = fVectorOf(cPoly);
     const fsv = faceSizeVector(cPoly);
     const sumCheck = Object.entries(fsv).reduce((s, [k, v]) => s + (6 - Number(k)) * v, 0);
-
-    const exp = Geo.poleExpand(cPoly);
-    if (!exp.ok) { setMsg('Pole expansion (C(n) → fullerene) failed: ' + exp.msg, true); return; }
-    const fullerene = exp.fullerene;
-    Geo.fixOrientationConsistency(fullerene);
-    Geo.canonicalize(fullerene, 5000, 1e-13);
-
-    // Build fullerene-vertex -> C(n)-vertex mapping for the contraction morph animation:
-    // kept vertices map straight through keepId; pole-wedge vertices all map to their pole.
-    const fullMapping = new Array(fullerene.verts.length);
-    for (const [oldV, newId] of exp.keepId) fullMapping[newId] = oldV;
-    for (const P of exp.poles) for (const newId of exp.poleNewIds.get(P)) fullMapping[newId] = P;
+    const contractedBase = {
+      poly: cPoly, counts: countFaceTypes(cPoly), admissible: !invalidEntry,
+      poleCount: 12, keptCount: fvC.V - 12, inv, fvC, fsv, sumCheck
+    };
 
     state.n = n;
-    state.fullerene = fullerene;
-    state.contracted = { poly: cPoly, mapping: fullMapping, counts: countFaceTypes(cPoly), admissible: true, poleCount: 12, keptCount: fvC.V - 12, inv, fvC, fsv, sumCheck };
-    state.contractedOn = false;
-    setMsg('', false);
-    afterNewPoly();
+    state.invalid = invalidEntry ? { type: invalidEntry.invalidType, m: invalidEntry.m } : null;
+
+    const attemptReconstruction = !invalidEntry || invalidEntry.invalidType === 'isolatedHexagons';
+    const exp = attemptReconstruction ? Geo.poleExpand(cPoly) : null;
+
+    if (exp && exp.ok) {
+      const fullerene = exp.fullerene;
+      Geo.fixOrientationConsistency(fullerene);
+      Geo.canonicalize(fullerene, 5000, 1e-13);
+      const fullMapping = new Array(fullerene.verts.length);
+      for (const [oldV, newId] of exp.keepId) fullMapping[newId] = oldV;
+      for (const P of exp.poles) for (const newId of exp.poleNewIds.get(P)) fullMapping[newId] = P;
+      state.fullerene = fullerene;
+      state.contracted = Object.assign({ mapping: fullMapping }, contractedBase);
+      setMsg(invalidMsg(state.invalid), !!state.invalid);
+      afterNewPoly(false);
+    } else {
+      // No fullerene reconstruction: either not attempted (non-isolated-pentagons —
+      // the two anomalous poles can't be unambiguously expanded from contracted
+      // data alone) or it unexpectedly failed. Show C(n) itself directly.
+      state.fullerene = null;
+      state.contracted = Object.assign({ mapping: null }, contractedBase);
+      const msg = invalidMsg(state.invalid) || (exp && !exp.ok ? 'Pole expansion failed: ' + exp.msg : '');
+      setMsg(msg, true);
+      afterNewPoly(true);
+    }
   }
 
   function countFaceTypes(poly) {
@@ -102,9 +125,13 @@
     el.className = 'msg' + (isErr ? ' err' : '');
   }
 
-  function afterNewPoly() {
-    Renderer.setPoly(state.fullerene, null);
-    state.contractedOn = false;
+  function afterNewPoly(showContracted) {
+    state.contractedOn = showContracted;
+    if (showContracted) {
+      Renderer.setPoly(state.contracted.poly, null, false);
+    } else {
+      Renderer.setPoly(state.fullerene, null, true);
+    }
     updateContractBtn();
     updateReadout();
   }
@@ -145,9 +172,9 @@
             const mapped = state.contracted.mapping[i];
             if (mapped < state.contracted.poleCount && !seenPole.has(mapped)) { seenPole.add(mapped); poleIdx.push(mapped); }
           }
-          Renderer.setPoly(state.contracted.poly, poleIdx);
+          Renderer.setPoly(state.contracted.poly, poleIdx, false);
         } else {
-          Renderer.setPoly(state.fullerene, null);
+          Renderer.setPoly(state.fullerene, null, true);
         }
         updateContractBtn();
         updateReadout();
@@ -158,8 +185,17 @@
 
   function updateContractBtn() {
     const btn = $('contractBtn');
-    btn.textContent = state.contractedOn ? '← Expand to fullerene' : 'Contract poles →';
-    btn.disabled = !state.fullerene;
+    if (!state.fullerene) {
+      btn.textContent = 'Contract poles →';
+      btn.disabled = true;
+      btn.title = state.invalid && state.invalid.type === 'nonIsolatedPentagons'
+        ? "Fullerene reconstruction isn't available for this non-IPR isomer — the two adjacent pentagon poles can't be unambiguously expanded back from the contracted data alone."
+        : '';
+    } else {
+      btn.textContent = state.contractedOn ? '← Expand to fullerene' : 'Contract poles →';
+      btn.disabled = false;
+      btn.title = '';
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -173,14 +209,16 @@
 
   function updateReadout() {
     const el = $('readout');
-    if (!state.fullerene) { el.innerHTML = ''; return; }
+    if (!state.contracted) { el.innerHTML = ''; return; }
     const n = state.n;
-    const fvF = fVectorOf(state.fullerene);
     let lines = [];
     lines.push(row('n', n));
     lines.push(row('Source', `published coordinates (C${2 * n + 20})`));
     lines.push(row('Point group', pointGroupGuess(n)));
-    lines.push(row('Fullerene f-vector', `(${fvF.V},${fvF.E},${fvF.F})`));
+    if (state.fullerene) {
+      const fvF = fVectorOf(state.fullerene);
+      lines.push(row('Fullerene f-vector', `(${fvF.V},${fvF.E},${fvF.F})`));
+    }
     const c = state.contracted;
     lines.push(row('C(n) f-vector', `(${c.fvC.V},${c.fvC.E},${c.fvC.F})`));
     const fsvStr = Object.keys(c.fsv).sort().map(k => `${k}:${c.fsv[k]}`).join(', ');
@@ -188,7 +226,11 @@
     lines.push(rowHtml('ρ (rho)', fmtHit(c.inv.rho, 6, ICOSAHEDRAL_N.has(n))));
     lines.push(rowHtml('ι (iota)', fmtHit(c.inv.iota, 4, ICOSAHEDRAL_N.has(n))));
     lines.push(row('Poles / kept vertices', `${c.poleCount} / ${c.keptCount}`));
-    lines.push(row('Σ p(h) check', `${c.sumCheck} (expect 60)${c.sumCheck === 60 ? ' ✓' : ' ✗'}`));
+    if (state.invalid) {
+      lines.push(rowHtml('Admissible', `<span class="v" style="color:var(--danger);font-weight:700;">${invalidMsg(state.invalid)}</span>`));
+    } else {
+      lines.push(row('Σ p(h) check', `${c.sumCheck} (expect 60)${c.sumCheck === 60 ? ' ✓' : ' ✗'}`));
+    }
     el.innerHTML = lines.join('');
   }
   function row(k, v) { return `<div><span class="k">${k}</span><span class="v">${v}</span></div>`; }
@@ -265,6 +307,26 @@
     }
     check(`all ${keys.length} table entries expand to a valid fullerene`, expandFails === 0, expandFails ? `${expandFails} failed` : '');
 
+    const invalidTable = window.CATALAN_INVALID_TABLE || {};
+    const invalidKeys = Object.keys(invalidTable).map(Number).sort((a, b) => a - b);
+    check(`invalid-isomer table has entries`, invalidKeys.length > 0, `${invalidKeys.length} entries`);
+    for (const n of invalidKeys) {
+      const entry = invalidTable[String(n)];
+      const verts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+      const poly = { verts, faces: entry.faces.map(f => f.slice()) };
+      if (entry.invalidType === 'isolatedHexagons') {
+        const hexCount = poly.faces.filter(f => f.length === 6).length;
+        check(`n=${n} (invalid) hexagon count matches m`, hexCount === entry.m, `hexCount=${hexCount} m=${entry.m}`);
+        const exp = Geo.poleExpand(poly);
+        check(`n=${n} (invalid) pole expansion succeeds`, exp.ok, exp.ok ? '' : exp.msg);
+      } else if (entry.invalidType === 'nonIsolatedPentagons') {
+        const deg = new Array(poly.verts.length).fill(0);
+        for (const f of poly.faces) for (const v of f) deg[v]++;
+        const anomalous = deg.filter(d => d !== 3 && d !== 5).length;
+        check(`n=${n} (invalid) anomalous-degree pole count matches 2×m`, anomalous === entry.m * 2, `anomalous=${anomalous} expected=${entry.m * 2}`);
+      }
+    }
+
     $('selftest').innerHTML = out.join('\n') + `\n\n${allPass ? '<span class="pass">All gates passed.</span>' : '<span class="fail">Some gates FAILED.</span>'}`;
   }
 
@@ -274,7 +336,7 @@
   function renderLegend() {
     const labels = {
       triangle: 'Triangle', rhombus: 'Rhombus', trapezoid: 'Trapezoid',
-      shieldPentagon: 'Shield pentagon (C(n))',
+      floretPentagon: 'Floret pentagon',
       fullereneHexagon: 'Hexagon (fullerene)', fullerenePentagon: 'Regular pentagon (fullerene)'
     };
     const rows = Object.entries(Renderer.FACE_COLORS).map(([key, hex]) => {
@@ -305,7 +367,7 @@
     generate(20);
 
     Renderer.startLoop(() => {
-      $('hud').textContent = state.fullerene
+      $('hud').textContent = state.contracted
         ? `${state.contractedOn ? 'C(' + state.n + ')' : 'C' + (2 * state.n + 20) + ' fullerene'} — drag to orbit, scroll to zoom`
         : '';
     });

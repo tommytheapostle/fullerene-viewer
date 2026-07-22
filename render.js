@@ -7,26 +7,29 @@
   'use strict';
 
   // Faces are classified by actual shape, not just side count:
-  //   C(n) faces: triangle / rhombus (all 4 sides equal) / trapezoid (other quad) / shield pentagon
+  //   C(n) faces: triangle / rhombus (all 4 sides equal) / trapezoid (other quad) / floret pentagon
   //   fullerene faces (pre-contraction view): hexagon / regular pentagon
+  // A C(n)-like face of size 6 only shows up for the "invalid: isolated hexagons" isomers
+  // (an admissible C(n) never has one), and still reads as a hexagon there.
   const FACE_COLORS = {
     triangle: 0xf2c94c,        // yellow
     rhombus: 0xd6493a,         // red
     trapezoid: 0x4caf6d,       // green
-    shieldPentagon: 0x3f7fd1,  // blue
+    floretPentagon: 0x3f7fd1,  // blue
     fullereneHexagon: 0xf7f7f2,  // white
     fullerenePentagon: 0x1a1a1a  // black
   };
   const EDGE_COLOR = 0x3a352c;
   const POLE_COLOR = 0x24211b;
 
-  // A poly's face-size composition tells us whether it's the fullerene (pentagons only
-  // touch hexagons, never triangles/quads) or the contracted C(n) (never has hexagons) —
-  // within this app's n >= 20 range the fullerene always has at least one hexagon face.
+  // Which face-context a poly is being viewed in must be passed explicitly rather than
+  // inferred from its faces — a fullerene has only pentagon/hexagon faces, but a C(n)
+  // (specifically an "invalid: isolated hexagons" one) can ALSO contain a hexagon face,
+  // so hexagon-presence alone can't tell the two apart.
   function classifyFace(poly, face, isFullereneCtx) {
     const n = face.length;
     if (n === 6) return 'fullereneHexagon';
-    if (n === 5) return isFullereneCtx ? 'fullerenePentagon' : 'shieldPentagon';
+    if (n === 5) return isFullereneCtx ? 'fullerenePentagon' : 'floretPentagon';
     if (n === 3) return 'triangle';
     if (n === 4) {
       const pts = face.map(vi => poly.verts[vi]);
@@ -152,12 +155,11 @@
   // the size of the face it belongs to (a vertex touching only one face size gets
   // that color cleanly; shared verts get whichever face is drawn — fine since color
   // is meant to read at the face level and faces don't share triangulation verts here).
-  function buildFaceGeometry(poly) {
+  function buildFaceGeometry(poly, isFullereneCtx) {
     const positions = [];
     const colors = [];
     const normals = [];
     const colorObj = new THREE.Color();
-    const isFullereneCtx = poly.faces.some(f => f.length === 6);
     for (const f of poly.faces) {
       if (f.length < 3) continue;
       const col = FACE_COLORS[classifyFace(poly, f, isFullereneCtx)] || 0x999999;
@@ -201,12 +203,12 @@
     return geo;
   }
 
-  function setPoly(poly, poleIndices) {
+  function setPoly(poly, poleIndices, isFullereneCtx) {
     if (faceMesh) { scene_disposeMesh(faceMesh); world.remove(faceMesh); faceMesh = null; }
     if (edgeLines) { scene_disposeMesh(edgeLines); world.remove(edgeLines); edgeLines = null; }
     while (poleGroup.children.length) { const c = poleGroup.children.pop(); c.geometry.dispose(); c.material.dispose(); }
 
-    const faceGeo = buildFaceGeometry(poly);
+    const faceGeo = buildFaceGeometry(poly, isFullereneCtx);
     // flatShading:true would recompute normals per-triangle via screen-space derivatives,
     // which visibly creases each face along its centroid-fan triangulation seams even when
     // the face is perfectly planar. We already supply one true face-normal per vertex, so
@@ -258,7 +260,7 @@
     const n = fromPositions.length;
     const lerped = new Array(n);
     for (let i = 0; i < n; i++) lerped[i] = new THREE.Vector3().lerpVectors(fromPositions[i], targetPositions[i], t);
-    setPoly({ verts: lerped, faces: baseFaces }, null);
+    setPoly({ verts: lerped, faces: baseFaces }, null, true);
   }
 
   function render() {
