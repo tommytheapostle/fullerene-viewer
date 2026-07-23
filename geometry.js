@@ -54,18 +54,20 @@
       newFaces.push(collapsed);
     }
 
-    // Non-isolated-pentagon count (m): pairs of pentagons sharing an edge.
+    // Non-isolated-pentagon edges: the fullerene edges directly shared by two pentagons.
+    // Each such edge is what gets highlighted in the fullerene view as the visible defect.
     const pentEdgeOwner = new Map();
-    let nonIsolatedPentagonPairs = 0;
+    const nonIsolatedPentagonEdges = [];
     for (const fi of pentagonFaces) {
       const f = fullerene.faces[fi];
       for (let i = 0; i < f.length; i++) {
         const a = f[i], b = f[(i + 1) % f.length];
         const key = Math.min(a, b) + '_' + Math.max(a, b);
-        if (pentEdgeOwner.has(key)) nonIsolatedPentagonPairs++;
+        if (pentEdgeOwner.has(key)) nonIsolatedPentagonEdges.push([a, b]);
         else pentEdgeOwner.set(key, fi);
       }
     }
+    const nonIsolatedPentagonPairs = nonIsolatedPentagonEdges.length;
 
     const poly = { verts: newVerts, faces: newFaces };
     const counts = { a3: 0, a4: 0, a5: 0, other: 0 };
@@ -85,7 +87,7 @@
 
     return {
       ok: true, poly, poleCount: pentagonFaces.length, keptCount: keepId.size, counts, admissible, mapping,
-      isolatedHexagonCount, nonIsolatedPentagonPairs, anomalousPoles
+      isolatedHexagonCount, nonIsolatedPentagonPairs, nonIsolatedPentagonEdges, anomalousPoles
     };
   }
 

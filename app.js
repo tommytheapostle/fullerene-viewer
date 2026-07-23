@@ -9,13 +9,26 @@
   const state = {
     n: 20,
     fullerene: null,          // reconstructed fullerene Poly, or null when unreconstructable
-    contracted: null,         // {poly, mapping, counts, admissible, poleCount, keptCount, inv, fvC, fsv, sumCheck}
+    contracted: null,         // {poly, mapping, counts, admissible, poleCount, keptCount, poleIndices, inv, fvC, fsv, sumCheck}
     contractedOn: false,      // are we currently showing C(n)?
     animating: false,
-    invalid: null             // null | {type: 'nonIsolatedPentagons'|'isolatedHexagons', m}
+    invalid: null,            // null | {type: 'nonIsolatedPentagons'|'isolatedHexagons', m}
+    highlightEdges: null      // fullerene-view-only: [a,b] vertex pairs marking a pentagon-pentagon edge
   };
 
   const $ = id => document.getElementById(id);
+
+  // The true poles of a C(n)-like poly are exactly its degree-5 vertices — this must be
+  // computed from actual topology rather than assumed to be indices 0..11: that range only
+  // holds for data we contracted ourselves (poleContract always pushes poles first), not for
+  // published coordinate files, whose vertex order carries no such guarantee.
+  function computePoleIndices(poly) {
+    const deg = new Array(poly.verts.length).fill(0);
+    for (const f of poly.faces) for (const v of f) deg[v]++;
+    const idx = [];
+    for (let v = 0; v < poly.verts.length; v++) if (deg[v] === 5) idx.push(v);
+    return idx;
+  }
 
   function fVectorOf(poly) {
     const V = poly.verts.length;
@@ -84,12 +97,14 @@
     const fvC = fVectorOf(cPoly);
     const fsv = faceSizeVector(cPoly);
     const sumCheck = Object.entries(fsv).reduce((s, [k, v]) => s + (6 - Number(k)) * v, 0);
+    const poleIndices = computePoleIndices(cPoly);
     const contractedBase = {
       poly: cPoly, counts: countFaceTypes(cPoly), admissible: !invalidEntry,
-      poleCount: 12, keptCount: fvC.V - 12, inv, fvC, fsv, sumCheck, anomalousPoles: []
+      poleCount: 12, keptCount: fvC.V - 12, poleIndices, inv, fvC, fsv, sumCheck
     };
 
     state.invalid = invalidEntry ? { type: invalidEntry.invalidType, m: invalidEntry.m } : null;
+    state.highlightEdges = null;
 
     const attemptReconstruction = !invalidEntry || invalidEntry.invalidType === 'isolatedHexagons';
     const exp = attemptReconstruction ? Geo.poleExpand(cPoly) : null;
@@ -137,11 +152,11 @@
     const sumCheck = Object.entries(fsv).reduce((s, [k, v]) => s + (6 - Number(k)) * v, 0);
 
     state.invalid = { type: entry.invalidType, m: cr.nonIsolatedPentagonPairs || cr.isolatedHexagonCount };
+    state.highlightEdges = cr.nonIsolatedPentagonEdges;
     state.fullerene = fullerene;
     state.contracted = {
       poly: cr.poly, mapping: cr.mapping, counts: cr.counts, admissible: cr.admissible,
-      poleCount: cr.poleCount, keptCount: cr.keptCount, inv, fvC, fsv, sumCheck,
-      anomalousPoles: cr.anomalousPoles
+      poleCount: cr.poleCount, keptCount: cr.keptCount, poleIndices: computePoleIndices(cr.poly), inv, fvC, fsv, sumCheck
     };
     setMsg(invalidMsg(state.invalid), true);
     afterNewPoly(false);
@@ -161,16 +176,12 @@
     el.className = 'msg' + (isErr ? ' err' : '');
   }
 
-  function defectSet() {
-    return new Set((state.contracted && state.contracted.anomalousPoles) || []);
-  }
-
   function afterNewPoly(showContracted) {
     state.contractedOn = showContracted;
     if (showContracted) {
-      Renderer.setPoly(state.contracted.poly, null, false, defectSet());
+      Renderer.setPoly(state.contracted.poly, state.contracted.poleIndices, false);
     } else {
-      Renderer.setPoly(state.fullerene, null, true);
+      Renderer.setPoly(state.fullerene, null, true, state.highlightEdges);
     }
     updateContractBtn();
     updateReadout();
@@ -206,15 +217,9 @@
         state.animating = false;
         state.contractedOn = turningOn;
         if (turningOn) {
-          const poleIdx = [];
-          const seenPole = new Set();
-          for (let i = 0; i < nFull; i++) {
-            const mapped = state.contracted.mapping[i];
-            if (mapped < state.contracted.poleCount && !seenPole.has(mapped)) { seenPole.add(mapped); poleIdx.push(mapped); }
-          }
-          Renderer.setPoly(state.contracted.poly, poleIdx, false, defectSet());
+          Renderer.setPoly(state.contracted.poly, state.contracted.poleIndices, false);
         } else {
-          Renderer.setPoly(state.fullerene, null, true);
+          Renderer.setPoly(state.fullerene, null, true, state.highlightEdges);
         }
         updateContractBtn();
         updateReadout();
@@ -385,15 +390,17 @@
   // ---------------------------------------------------------------------------
   function renderLegend() {
     const labels = {
-      triangle: 'Triangle', rhombus: 'Rhombus', trapezoid: 'Trapezoid',
+      triangle: 'Triangle', rhombus: 'Rhombus (or trying to be)', trapezoid: 'Trapezoid / skewed quad',
       floretPentagon: 'Floret pentagon',
-      fullereneHexagon: 'Hexagon (fullerene)', fullerenePentagon: 'Regular pentagon (fullerene)',
-      error: 'Error (isolated hexagon / pentagon pair)'
+      fullereneHexagon: 'Hexagon (fullerene)', fullerenePentagon: 'Pole pentagon (fullerene)',
+      error: 'Isolated hexagon (error)'
     };
     const rows = Object.entries(Renderer.FACE_COLORS).map(([key, hex]) => {
       const col = '#' + hex.toString(16).padStart(6, '0');
       return `<div><span style="display:inline-block;width:10px;height:10px;background:${col};border:1px solid var(--border);margin-right:6px;vertical-align:middle;"></span>${labels[key] || key}</div>`;
     });
+    const highlightCol = '#' + (0xd633c4).toString(16).padStart(6, '0');
+    rows.push(`<div><span style="display:inline-block;width:10px;height:2px;background:${highlightCol};margin-right:6px;margin-bottom:4px;vertical-align:middle;"></span>Pentagon-pentagon edge (fullerene, error)</div>`);
     $('legend').innerHTML = rows.join('');
   }
 

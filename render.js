@@ -7,11 +7,14 @@
   'use strict';
 
   // Faces are classified by actual shape, not just side count:
-  //   C(n) faces: triangle / rhombus (all 4 sides equal) / trapezoid (other quad) / floret pentagon
-  //   fullerene faces (pre-contraction view): hexagon / regular pentagon
-  // Two error markers, both magenta: a leftover 6-sided face in C(n) context ("isolated
-  // hexagons" isomers — an admissible C(n) never has one), and any face touching a pole
-  // left at degree != 5 by a pentagon-pentagon adjacency ("non-isolated pentagons" isomers).
+  //   C(n) faces: triangle / rhombus (all 4 sides equal, or trying to be) / trapezoid
+  //     (including skewed quads from a pentagon-pentagon defect) / floret pentagon
+  //   fullerene faces (pre-contraction view): hexagon / pole pentagon
+  // The one error marker left is a leftover 6-sided face in C(n) context ("isolated
+  // hexagons" isomers — an admissible C(n) never has one). A "non-isolated pentagons"
+  // defect is flagged differently: as a highlighted edge in the fullerene view (see
+  // buildEdgeGeometry/setPoly's highlightEdges param), not by recoloring faces — the C(n)
+  // faces around it still get their normal classification, just possibly less regular.
   const FACE_COLORS = {
     triangle: 0xf2c94c,        // yellow
     rhombus: 0xd6493a,         // red
@@ -22,27 +25,27 @@
     error: 0xd633c4              // magenta
   };
   const EDGE_COLOR = 0x3a352c;
+  const EDGE_HIGHLIGHT_COLOR = 0xd633c4; // magenta, marks a pentagon-pentagon adjacency edge
   const POLE_COLOR = 0x24211b;
 
   // Which face-context a poly is being viewed in must be passed explicitly rather than
   // inferred from its faces — a fullerene has only pentagon/hexagon faces, but a C(n)
   // (specifically an "invalid: isolated hexagons" one) can ALSO contain a hexagon face,
-  // so hexagon-presence alone can't tell the two apart. defectVertexIds (only meaningful
-  // in C(n) context) flags poles left at non-5 degree by a pentagon-pentagon adjacency.
-  function classifyFace(poly, face, isFullereneCtx, defectVertexIds) {
+  // so hexagon-presence alone can't tell the two apart.
+  function classifyFace(poly, face, isFullereneCtx) {
     const n = face.length;
-    if (!isFullereneCtx) {
-      if (n === 6) return 'error'; // isolated hexagon that never touched a pole
-      if (defectVertexIds && face.some(v => defectVertexIds.has(v))) return 'error';
-    }
+    if (!isFullereneCtx && n === 6) return 'error'; // isolated hexagon that never touched a pole
     if (n === 6) return 'fullereneHexagon';
     if (n === 5) return isFullereneCtx ? 'fullerenePentagon' : 'floretPentagon';
     if (n === 3) return 'triangle';
     if (n === 4) {
+      // A quad "trying to be" a rhombus reads as one even with modest deviation — these
+      // isomers aren't always fully converged to canonical form, so a strict tolerance
+      // would misclassify a near-rhombus as a trapezoid.
       const pts = face.map(vi => poly.verts[vi]);
       const sides = [0, 1, 2, 3].map(i => pts[i].distanceTo(pts[(i + 1) % 4]));
       const avg = sides.reduce((a, b) => a + b, 0) / 4;
-      const allEqual = sides.every(s => Math.abs(s - avg) < avg * 0.02);
+      const allEqual = sides.every(s => Math.abs(s - avg) < avg * 0.12);
       return allEqual ? 'rhombus' : 'trapezoid';
     }
     return 'fullereneHexagon';
@@ -50,7 +53,7 @@
 
   let scene, camera, rendererGL, canvas;
   let world; // group holding the polyhedron + edges + poles
-  let faceMesh = null, edgeLines = null, poleGroup = null, sphereMesh = null;
+  let faceMesh = null, edgeLines = null, highlightLines = null, poleGroup = null, sphereMesh = null;
   let orbitQuat = new THREE.Quaternion();
   let dragging = false, lastX = 0, lastY = 0;
   let autoRotate = true, userInteracted = false, idleTimer = null;
@@ -162,14 +165,14 @@
   // the size of the face it belongs to (a vertex touching only one face size gets
   // that color cleanly; shared verts get whichever face is drawn — fine since color
   // is meant to read at the face level and faces don't share triangulation verts here).
-  function buildFaceGeometry(poly, isFullereneCtx, defectVertexIds) {
+  function buildFaceGeometry(poly, isFullereneCtx) {
     const positions = [];
     const colors = [];
     const normals = [];
     const colorObj = new THREE.Color();
     for (const f of poly.faces) {
       if (f.length < 3) continue;
-      const col = FACE_COLORS[classifyFace(poly, f, isFullereneCtx, defectVertexIds)] || 0x999999;
+      const col = FACE_COLORS[classifyFace(poly, f, isFullereneCtx)] || 0x999999;
       colorObj.setHex(col);
       const centroid = faceCentroid(poly, f);
       let normal = new THREE.Vector3();
@@ -191,7 +194,10 @@
     return geo;
   }
 
-  function buildEdgeGeometry(poly) {
+  // highlightEdgeSet, if given, is a Set of "min_max" vertex-index-pair keys to exclude from
+  // the normal edge lines (they're drawn separately, see buildHighlightEdgeGeometry) so the
+  // highlight color isn't blended with/hidden under the regular edge color at the same spot.
+  function buildEdgeGeometry(poly, highlightEdgeSet) {
     const positions = [];
     const seen = new Set();
     for (const f of poly.faces) {
@@ -201,6 +207,7 @@
         const key = Math.min(a, b) + '_' + Math.max(a, b);
         if (seen.has(key)) continue;
         seen.add(key);
+        if (highlightEdgeSet && highlightEdgeSet.has(key)) continue;
         const pa = poly.verts[a], pb = poly.verts[b];
         positions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
       }
@@ -210,12 +217,28 @@
     return geo;
   }
 
-  function setPoly(poly, poleIndices, isFullereneCtx, defectVertexIds) {
+  function buildHighlightEdgeGeometry(poly, highlightEdgeSet) {
+    const positions = [];
+    for (const key of highlightEdgeSet) {
+      const [a, b] = key.split('_').map(Number);
+      const pa = poly.verts[a], pb = poly.verts[b];
+      positions.push(pa.x, pa.y, pa.z, pb.x, pb.y, pb.z);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    return geo;
+  }
+
+  // highlightEdges (only meaningful in fullerene context): an array of [a,b] vertex-index
+  // pairs to draw in magenta — marks a pentagon-pentagon adjacency edge in a "non-isolated
+  // pentagons" isomer.
+  function setPoly(poly, poleIndices, isFullereneCtx, highlightEdges) {
     if (faceMesh) { scene_disposeMesh(faceMesh); world.remove(faceMesh); faceMesh = null; }
     if (edgeLines) { scene_disposeMesh(edgeLines); world.remove(edgeLines); edgeLines = null; }
+    if (highlightLines) { scene_disposeMesh(highlightLines); world.remove(highlightLines); highlightLines = null; }
     while (poleGroup.children.length) { const c = poleGroup.children.pop(); c.geometry.dispose(); c.material.dispose(); }
 
-    const faceGeo = buildFaceGeometry(poly, isFullereneCtx, defectVertexIds);
+    const faceGeo = buildFaceGeometry(poly, isFullereneCtx);
     // flatShading:true would recompute normals per-triangle via screen-space derivatives,
     // which visibly creases each face along its centroid-fan triangulation seams even when
     // the face is perfectly planar. We already supply one true face-normal per vertex, so
@@ -228,11 +251,23 @@
     faceMesh = new THREE.Mesh(faceGeo, faceMat);
     world.add(faceMesh);
 
-    const edgeGeo = buildEdgeGeometry(poly);
+    const highlightEdgeSet = (isFullereneCtx && highlightEdges && highlightEdges.length)
+      ? new Set(highlightEdges.map(([a, b]) => Math.min(a, b) + '_' + Math.max(a, b)))
+      : null;
+
+    const edgeGeo = buildEdgeGeometry(poly, highlightEdgeSet);
     const edgeMat = new THREE.LineBasicMaterial({ color: EDGE_COLOR, transparent: true, opacity: 0.55 });
     edgeLines = new THREE.LineSegments(edgeGeo, edgeMat);
     edgeLines.visible = toggles.edges;
     world.add(edgeLines);
+
+    if (highlightEdgeSet) {
+      const highlightGeo = buildHighlightEdgeGeometry(poly, highlightEdgeSet);
+      const highlightMat = new THREE.LineBasicMaterial({ color: EDGE_HIGHLIGHT_COLOR, linewidth: 3 });
+      highlightLines = new THREE.LineSegments(highlightGeo, highlightMat);
+      highlightLines.visible = toggles.edges;
+      world.add(highlightLines);
+    }
 
     if (poleIndices && poleIndices.length) {
       const poleGeo = new THREE.SphereGeometry(0.035, 12, 8);
@@ -251,6 +286,7 @@
   function setToggles(t) {
     Object.assign(toggles, t);
     if (edgeLines) edgeLines.visible = toggles.edges;
+    if (highlightLines) highlightLines.visible = toggles.edges;
     if (sphereMesh) sphereMesh.visible = toggles.sphere;
     if (poleGroup) poleGroup.visible = toggles.poles;
     if (faceMesh) {
