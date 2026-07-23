@@ -4,8 +4,6 @@
 (function () {
   'use strict';
 
-  const ICOSAHEDRAL_N = new Set([20, 30, 60]); // the 3 isohedral cases (rho = iota = 1 exactly)
-
   const state = {
     n: 20,
     fullerene: null,          // reconstructed fullerene Poly, or null when unreconstructable
@@ -68,12 +66,6 @@
     const m = {};
     for (const f of poly.faces) m[f.length] = (m[f.length] || 0) + 1;
     return m;
-  }
-
-  function pointGroupGuess(n) {
-    if (n === 20 || n === 30) return 'I_h';
-    if (n === 60) return 'I';
-    return 'C_1 (generic isomer)';
   }
 
   function invalidMsg(invalid) {
@@ -267,9 +259,9 @@
   // ---------------------------------------------------------------------------
   // Readout
   // ---------------------------------------------------------------------------
-  function fmtHit(val, digits, isOne) {
+  function fmtHit(val, digits) {
     const s = val.toFixed(digits);
-    const hit = isOne && Math.abs(val - 1) < 5e-7;
+    const hit = Math.abs(val - 1) < 5e-7;
     return `<span class="v${hit ? ' hit' : ''}">${s}</span>`;
   }
 
@@ -279,8 +271,6 @@
     const n = state.n;
     let lines = [];
     lines.push(row('n', n));
-    lines.push(row('Source', `published coordinates (C${2 * n + 20})`));
-    lines.push(row('Point group', pointGroupGuess(n)));
     if (state.fullerene) {
       const fvF = fVectorOf(state.fullerene);
       lines.push(row('Fullerene f-vector', `(${fvF.V},${fvF.E},${fvF.F})`));
@@ -289,8 +279,8 @@
     lines.push(row('C(n) f-vector', `(${c.fvC.V},${c.fvC.E},${c.fvC.F})`));
     const fsvStr = Object.keys(c.fsv).sort().map(k => `${k}:${c.fsv[k]}`).join(', ');
     lines.push(row('Face-size vector', `{${fsvStr}}`));
-    lines.push(rowHtml('ρ (rho)', fmtHit(c.inv.rho, 6, ICOSAHEDRAL_N.has(n))));
-    lines.push(rowHtml('ι (iota)', fmtHit(c.inv.iota, 4, ICOSAHEDRAL_N.has(n))));
+    lines.push(rowHtml('ρ (rho)', fmtHit(c.inv.rho, 6)));
+    lines.push(rowHtml('ι (iota)', fmtHit(c.inv.iota, 4)));
     if (state.invalid) {
       lines.push(rowHtml('Admissible', `<span class="v" style="color:var(--danger);font-weight:700;">${invalidMsg(state.invalid)}</span>`));
     } else {
