@@ -11,8 +11,15 @@
 (function (global) {
   'use strict';
 
-  // Contract each pentagon of a fullerene to its centroid pole, producing C(n).
-  // Requires IPR (no two pentagons share an edge / vertex) to be well-defined.
+  // Contract each pentagon of a fullerene to its centroid pole, producing C(n). Each of the
+  // 12 pentagons always gets its own pole, even under non-IPR adjacency — a vertex shared by
+  // two pentagons (an edge where they touch) is assigned to whichever pentagon claims it
+  // first; which one doesn't matter topologically, since either choice yields the same
+  // face-size distribution and pole-degree pattern (verified against a hand-solved example).
+  // The pentagon(s) on the losing side of that assignment simply end up with a pole of degree
+  // 4 instead of 5 — the ordinary corner-collapsing below accounts for the "lost" wedge on its
+  // own, with no special-casing needed. An isolated hexagon (touching no pentagon at all)
+  // likewise survives unchanged as a 6-sided face rather than erroring.
   function poleContract(fullerene) {
     const nv = fullerene.verts.length;
     const pentagonFaces = [];
@@ -22,8 +29,7 @@
     const vertexPentagon = new Array(nv).fill(-1);
     for (const fi of pentagonFaces) {
       for (const v of fullerene.faces[fi]) {
-        if (vertexPentagon[v] !== -1) return { ok: false, msg: `vertex ${v} belongs to 2 pentagons (non-IPR); pole contraction undefined` };
-        vertexPentagon[v] = fi;
+        if (vertexPentagon[v] === -1) vertexPentagon[v] = fi;
       }
     }
 
@@ -48,15 +54,39 @@
       newFaces.push(collapsed);
     }
 
+    // Non-isolated-pentagon count (m): pairs of pentagons sharing an edge.
+    const pentEdgeOwner = new Map();
+    let nonIsolatedPentagonPairs = 0;
+    for (const fi of pentagonFaces) {
+      const f = fullerene.faces[fi];
+      for (let i = 0; i < f.length; i++) {
+        const a = f[i], b = f[(i + 1) % f.length];
+        const key = Math.min(a, b) + '_' + Math.max(a, b);
+        if (pentEdgeOwner.has(key)) nonIsolatedPentagonPairs++;
+        else pentEdgeOwner.set(key, fi);
+      }
+    }
+
     const poly = { verts: newVerts, faces: newFaces };
     const counts = { a3: 0, a4: 0, a5: 0, other: 0 };
     for (const f of newFaces) {
       if (f.length === 3) counts.a3++; else if (f.length === 4) counts.a4++; else if (f.length === 5) counts.a5++; else counts.other++;
     }
-    const admissible = counts.other === 0; // a face of size!=3,4,5 after contraction means an isolated (p=0) hexagon survived
+    const isolatedHexagonCount = counts.other; // a face of size!=3,4,5 after contraction means an isolated (p=0) hexagon survived
+    const admissible = isolatedHexagonCount === 0 && nonIsolatedPentagonPairs === 0;
     const mapping = new Array(nv);
     for (let v = 0; v < nv; v++) mapping[v] = mapVert(v);
-    return { ok: true, poly, poleCount: pentagonFaces.length, keptCount: keepId.size, counts, admissible, mapping };
+
+    // Poles whose final degree isn't 5 are exactly the ones that lost a wedge to a
+    // pentagon-pentagon edge — useful for flagging the defect faces around them.
+    const poleDegree = new Array(pentagonFaces.length).fill(0);
+    for (const f of newFaces) for (const v of f) if (v < pentagonFaces.length) poleDegree[v]++;
+    const anomalousPoles = poleDegree.reduce((s, d, i) => (d !== 5 ? s.concat(i) : s), []);
+
+    return {
+      ok: true, poly, poleCount: pentagonFaces.length, keptCount: keepId.size, counts, admissible, mapping,
+      isolatedHexagonCount, nonIsolatedPentagonPairs, anomalousPoles
+    };
   }
 
   // Reverse of poleContract: given C(n) (with 12 degree-5 poles), reconstruct a fullerene

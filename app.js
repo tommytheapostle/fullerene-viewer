@@ -70,6 +70,13 @@
     const entry = validEntry || invalidEntry;
     if (!entry) { setMsg(reasonForN(n) || `No data for n=${n}.`, true); return; }
 
+    state.n = n;
+
+    if (invalidEntry && invalidEntry.isFullerene) {
+      generateFromFullerene(n, invalidEntry);
+      return;
+    }
+
     const cVerts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     const cPoly = { verts: cVerts, faces: entry.faces.map(f => f.slice()) };
     Geo.fixOrientationConsistency(cPoly);
@@ -79,10 +86,9 @@
     const sumCheck = Object.entries(fsv).reduce((s, [k, v]) => s + (6 - Number(k)) * v, 0);
     const contractedBase = {
       poly: cPoly, counts: countFaceTypes(cPoly), admissible: !invalidEntry,
-      poleCount: 12, keptCount: fvC.V - 12, inv, fvC, fsv, sumCheck
+      poleCount: 12, keptCount: fvC.V - 12, inv, fvC, fsv, sumCheck, anomalousPoles: []
     };
 
-    state.n = n;
     state.invalid = invalidEntry ? { type: invalidEntry.invalidType, m: invalidEntry.m } : null;
 
     const attemptReconstruction = !invalidEntry || invalidEntry.invalidType === 'isolatedHexagons';
@@ -111,6 +117,36 @@
     }
   }
 
+  // Entries stored as raw fullerene data (currently just non-isolated-pentagons isomers):
+  // contract forward via poleContract, which handles pentagon-pentagon adjacency directly
+  // and hands back both the C(n) result and the fullerene<->C(n) vertex mapping, so the
+  // "contract poles" toggle works exactly as it does for admissible isomers.
+  function generateFromFullerene(n, entry) {
+    const fVerts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+    const fullerene = { verts: fVerts, faces: entry.faces.map(f => f.slice()) };
+    Geo.fixOrientationConsistency(fullerene);
+    Geo.canonicalize(fullerene, 5000, 1e-13);
+
+    const cr = Geo.poleContract(fullerene);
+    if (!cr.ok) { setMsg('Pole contraction failed: ' + cr.msg, true); return; }
+    Geo.canonicalize(cr.poly, 20000, 1e-13);
+
+    const inv = Geo.computeInvariants(cr.poly);
+    const fvC = fVectorOf(cr.poly);
+    const fsv = faceSizeVector(cr.poly);
+    const sumCheck = Object.entries(fsv).reduce((s, [k, v]) => s + (6 - Number(k)) * v, 0);
+
+    state.invalid = { type: entry.invalidType, m: cr.nonIsolatedPentagonPairs || cr.isolatedHexagonCount };
+    state.fullerene = fullerene;
+    state.contracted = {
+      poly: cr.poly, mapping: cr.mapping, counts: cr.counts, admissible: cr.admissible,
+      poleCount: cr.poleCount, keptCount: cr.keptCount, inv, fvC, fsv, sumCheck,
+      anomalousPoles: cr.anomalousPoles
+    };
+    setMsg(invalidMsg(state.invalid), true);
+    afterNewPoly(false);
+  }
+
   function countFaceTypes(poly) {
     const c = { a3: 0, a4: 0, a5: 0, other: 0 };
     for (const f of poly.faces) {
@@ -125,10 +161,14 @@
     el.className = 'msg' + (isErr ? ' err' : '');
   }
 
+  function defectSet() {
+    return new Set((state.contracted && state.contracted.anomalousPoles) || []);
+  }
+
   function afterNewPoly(showContracted) {
     state.contractedOn = showContracted;
     if (showContracted) {
-      Renderer.setPoly(state.contracted.poly, null, false);
+      Renderer.setPoly(state.contracted.poly, null, false, defectSet());
     } else {
       Renderer.setPoly(state.fullerene, null, true);
     }
@@ -172,7 +212,7 @@
             const mapped = state.contracted.mapping[i];
             if (mapped < state.contracted.poleCount && !seenPole.has(mapped)) { seenPole.add(mapped); poleIdx.push(mapped); }
           }
-          Renderer.setPoly(state.contracted.poly, poleIdx, false);
+          Renderer.setPoly(state.contracted.poly, poleIdx, false, defectSet());
         } else {
           Renderer.setPoly(state.fullerene, null, true);
         }
@@ -314,7 +354,17 @@
       const entry = invalidTable[String(n)];
       const verts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
       const poly = { verts, faces: entry.faces.map(f => f.slice()) };
-      if (entry.invalidType === 'isolatedHexagons') {
+      if (entry.isFullerene) {
+        // stored as the fullerene itself: contract forward and check the result is sane
+        const cr = Geo.poleContract(poly);
+        check(`n=${n} (invalid) pole contraction succeeds`, cr.ok, cr.ok ? '' : cr.msg);
+        if (cr.ok) {
+          check(`n=${n} (invalid) C(n) has ${entry.invalidType === 'isolatedHexagons' ? 'isolated hexagon(s)' : 'non-isolated pentagon pair(s)'}`,
+            entry.invalidType === 'isolatedHexagons' ? cr.isolatedHexagonCount > 0 : cr.nonIsolatedPentagonPairs > 0,
+            `hexagons=${cr.isolatedHexagonCount} pairs=${cr.nonIsolatedPentagonPairs}`);
+          check(`n=${n} (invalid) anomalous pole count is even`, cr.anomalousPoles.length % 2 === 0, `count=${cr.anomalousPoles.length}`);
+        }
+      } else if (entry.invalidType === 'isolatedHexagons') {
         const hexCount = poly.faces.filter(f => f.length === 6).length;
         check(`n=${n} (invalid) hexagon count matches m`, hexCount === entry.m, `hexCount=${hexCount} m=${entry.m}`);
         const exp = Geo.poleExpand(poly);
@@ -337,7 +387,8 @@
     const labels = {
       triangle: 'Triangle', rhombus: 'Rhombus', trapezoid: 'Trapezoid',
       floretPentagon: 'Floret pentagon',
-      fullereneHexagon: 'Hexagon (fullerene)', fullerenePentagon: 'Regular pentagon (fullerene)'
+      fullereneHexagon: 'Hexagon (fullerene)', fullerenePentagon: 'Regular pentagon (fullerene)',
+      error: 'Error (isolated hexagon / pentagon pair)'
     };
     const rows = Object.entries(Renderer.FACE_COLORS).map(([key, hex]) => {
       const col = '#' + hex.toString(16).padStart(6, '0');
