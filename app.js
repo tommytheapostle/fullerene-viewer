@@ -30,6 +30,21 @@
     return idx;
   }
 
+  // Isolated hexagon faces in the fullerene view: a hexagon face is "isolated" iff none of
+  // its vertices map to a pole in C(n) — i.e. it never touches any of the 12 pentagons.
+  // Returns a Set of indices into state.fullerene.faces, for the fullerene-context magenta
+  // highlight (C(n) context doesn't need this: every hexagon face there is isolated by
+  // definition, since an admissible C(n) never has one at all).
+  function computeIsolatedHexFaceIndices() {
+    if (!state.fullerene || !state.contracted) return new Set();
+    const poleSet = new Set(state.contracted.poleIndices);
+    const idx = new Set();
+    state.fullerene.faces.forEach((f, fi) => {
+      if (f.length === 6 && f.every(v => !poleSet.has(state.contracted.mapping[v]))) idx.add(fi);
+    });
+    return idx;
+  }
+
   function fVectorOf(poly) {
     const V = poly.verts.length;
     const F = poly.faces.length;
@@ -58,7 +73,7 @@
 
   function invalidMsg(invalid) {
     if (!invalid) return '';
-    const label = invalid.type === 'nonIsolatedPentagons' ? 'non-isolated pentagons' : 'isolated hexagons';
+    const label = invalid.type === 'nonIsolatedPentagons' ? 'pentagon-pentagon edges' : 'isolated hexagons';
     return `invalid: ${label}: ${invalid.m}`;
   }
 
@@ -181,7 +196,7 @@
     if (showContracted) {
       Renderer.setPoly(state.contracted.poly, state.contracted.poleIndices, false);
     } else {
-      Renderer.setPoly(state.fullerene, null, true, state.highlightEdges);
+      Renderer.setPoly(state.fullerene, null, true, state.highlightEdges, computeIsolatedHexFaceIndices());
     }
     updateContractBtn();
     updateReadout();
@@ -219,7 +234,7 @@
         if (turningOn) {
           Renderer.setPoly(state.contracted.poly, state.contracted.poleIndices, false);
         } else {
-          Renderer.setPoly(state.fullerene, null, true, state.highlightEdges);
+          Renderer.setPoly(state.fullerene, null, true, state.highlightEdges, computeIsolatedHexFaceIndices());
         }
         updateContractBtn();
         updateReadout();
@@ -418,6 +433,7 @@
     $('tglEdges').addEventListener('change', e => { Renderer.setToggles({ edges: e.target.checked }); });
     $('tglSphere').addEventListener('change', e => { Renderer.setToggles({ sphere: e.target.checked }); });
     $('tglPoles').addEventListener('change', e => { Renderer.setToggles({ poles: e.target.checked }); });
+    $('tglIsolatedHex').addEventListener('change', e => { Renderer.setToggles({ highlightIsolatedHex: e.target.checked }); });
     $('tglSpin').addEventListener('change', e => { Renderer.setToggles({ spin: e.target.checked }); });
 
     setN(20);

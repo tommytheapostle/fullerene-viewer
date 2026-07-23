@@ -31,11 +31,18 @@
   // Which face-context a poly is being viewed in must be passed explicitly rather than
   // inferred from its faces — a fullerene has only pentagon/hexagon faces, but a C(n)
   // (specifically an "invalid: isolated hexagons" one) can ALSO contain a hexagon face,
-  // so hexagon-presence alone can't tell the two apart.
-  function classifyFace(poly, face, isFullereneCtx) {
+  // so hexagon-presence alone can't tell the two apart. In C(n) context every hexagon face
+  // IS an isolated one (an admissible C(n) never has any); in fullerene context only the
+  // specific faces named in isolatedHexFaceIndices (by index into poly.faces) are.
+  // highlightIsolatedHex is a toggle: off, isolated hexagons read as plain white in both
+  // contexts instead of the magenta error color.
+  function classifyFace(poly, face, faceIndex, isFullereneCtx, isolatedHexFaceIndices) {
     const n = face.length;
-    if (!isFullereneCtx && n === 6) return 'error'; // isolated hexagon that never touched a pole
-    if (n === 6) return 'fullereneHexagon';
+    if (n === 6) {
+      const isIsolated = isFullereneCtx ? !!(isolatedHexFaceIndices && isolatedHexFaceIndices.has(faceIndex)) : true;
+      if (isIsolated) return toggles.highlightIsolatedHex ? 'error' : 'fullereneHexagon';
+      return 'fullereneHexagon';
+    }
     if (n === 5) return isFullereneCtx ? 'fullerenePentagon' : 'floretPentagon';
     if (n === 3) return 'triangle';
     if (n === 4) {
@@ -58,7 +65,7 @@
   let dragging = false, lastX = 0, lastY = 0;
   let autoRotate = true, userInteracted = false, idleTimer = null;
   let camDistance = 3.4;
-  let toggles = { color: true, edges: true, sphere: false, poles: false, spin: false };
+  let toggles = { color: true, edges: true, sphere: false, poles: false, spin: false, highlightIsolatedHex: true };
 
   function init(canvasEl) {
     canvas = canvasEl;
@@ -165,14 +172,14 @@
   // the size of the face it belongs to (a vertex touching only one face size gets
   // that color cleanly; shared verts get whichever face is drawn — fine since color
   // is meant to read at the face level and faces don't share triangulation verts here).
-  function buildFaceGeometry(poly, isFullereneCtx) {
+  function buildFaceGeometry(poly, isFullereneCtx, isolatedHexFaceIndices) {
     const positions = [];
     const colors = [];
     const normals = [];
     const colorObj = new THREE.Color();
-    for (const f of poly.faces) {
-      if (f.length < 3) continue;
-      const col = FACE_COLORS[classifyFace(poly, f, isFullereneCtx)] || 0x999999;
+    poly.faces.forEach((f, fi) => {
+      if (f.length < 3) return;
+      const col = FACE_COLORS[classifyFace(poly, f, fi, isFullereneCtx, isolatedHexFaceIndices)] || 0x999999;
       colorObj.setHex(col);
       const centroid = faceCentroid(poly, f);
       let normal = new THREE.Vector3();
@@ -186,7 +193,7 @@
         positions.push(a.x, a.y, a.z, b.x, b.y, b.z, centroid.x, centroid.y, centroid.z);
         for (let k = 0; k < 3; k++) { colors.push(colorObj.r, colorObj.g, colorObj.b); normals.push(normal.x, normal.y, normal.z); }
       }
-    }
+    });
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
@@ -231,14 +238,18 @@
 
   // highlightEdges (only meaningful in fullerene context): an array of [a,b] vertex-index
   // pairs to draw in magenta — marks a pentagon-pentagon adjacency edge in a "non-isolated
-  // pentagons" isomer.
-  function setPoly(poly, poleIndices, isFullereneCtx, highlightEdges) {
+  // pentagons" isomer. isolatedHexFaceIndices (also fullerene-context only): a Set of indices
+  // into poly.faces marking which hexagon faces are isolated ones, for the same highlight
+  // treatment C(n) context always gives its (necessarily isolated) hexagon faces.
+  let lastSetPolyArgs = null; // cached so the highlightIsolatedHex toggle can trigger a rebuild
+  function setPoly(poly, poleIndices, isFullereneCtx, highlightEdges, isolatedHexFaceIndices) {
+    lastSetPolyArgs = [poly, poleIndices, isFullereneCtx, highlightEdges, isolatedHexFaceIndices];
     if (faceMesh) { scene_disposeMesh(faceMesh); world.remove(faceMesh); faceMesh = null; }
     if (edgeLines) { scene_disposeMesh(edgeLines); world.remove(edgeLines); edgeLines = null; }
     if (highlightLines) { scene_disposeMesh(highlightLines); world.remove(highlightLines); highlightLines = null; }
     while (poleGroup.children.length) { const c = poleGroup.children.pop(); c.geometry.dispose(); c.material.dispose(); }
 
-    const faceGeo = buildFaceGeometry(poly, isFullereneCtx);
+    const faceGeo = buildFaceGeometry(poly, isFullereneCtx, isolatedHexFaceIndices);
     // flatShading:true would recompute normals per-triangle via screen-space derivatives,
     // which visibly creases each face along its centroid-fan triangulation seams even when
     // the face is perfectly planar. We already supply one true face-normal per vertex, so
@@ -284,6 +295,7 @@
   function scene_disposeMesh(obj) { if (obj.geometry) obj.geometry.dispose(); if (obj.material) obj.material.dispose(); }
 
   function setToggles(t) {
+    const hexToggleChanged = 'highlightIsolatedHex' in t && t.highlightIsolatedHex !== toggles.highlightIsolatedHex;
     Object.assign(toggles, t);
     if (edgeLines) edgeLines.visible = toggles.edges;
     if (highlightLines) highlightLines.visible = toggles.edges;
@@ -294,6 +306,9 @@
       if (!toggles.color) faceMesh.material.color = new THREE.Color(0xb9a98e);
       faceMesh.material.needsUpdate = true;
     }
+    // face colors for isolated hexagons are baked into the geometry, not a visibility flag,
+    // so this toggle needs an actual rebuild rather than just flipping a material property.
+    if (hexToggleChanged && lastSetPolyArgs) setPoly(...lastSetPolyArgs);
   }
 
   // Render an intermediate frame during the morph: same face list as `baseFaces`
