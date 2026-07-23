@@ -343,7 +343,7 @@
       return `<div><span style="display:inline-block;width:10px;height:10px;background:${col};border:1px solid var(--border);margin-right:6px;vertical-align:middle;"></span>${labels[key] || key}</div>`;
     });
     const highlightCol = '#' + (0xd633c4).toString(16).padStart(6, '0');
-    rows.push(`<div><span style="display:inline-block;width:10px;height:2px;background:${highlightCol};margin-right:6px;margin-bottom:4px;vertical-align:middle;"></span>Pentagon-pentagon edge (error)</div>`);
+    rows.push(`<div><span style="display:inline-block;width:10px;height:2px;background:${highlightCol};margin-right:6px;margin-bottom:4px;vertical-align:middle;"></span>pentagon-pentagon edge (error)</div>`);
     $('legend').innerHTML = rows.join('');
   }
 
