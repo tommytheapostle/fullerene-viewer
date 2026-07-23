@@ -90,7 +90,7 @@
     scene.add(new THREE.AmbientLight(0xffffff, 0.55));
 
     const sphereGeo = new THREE.SphereGeometry(1, 48, 32);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: 0x9fb8c9, transparent: true, opacity: 0.12, depthWrite: false });
+    const sphereMat = new THREE.MeshBasicMaterial({ color: 0x9fb8c9, transparent: true, opacity: 0.28, depthWrite: false });
     sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
     sphereMesh.visible = false;
     world.add(sphereMesh);

@@ -35,9 +35,14 @@
   // Returns a Set of indices into state.fullerene.faces, for the fullerene-context magenta
   // highlight (C(n) context doesn't need this: every hexagon face there is isolated by
   // definition, since an admissible C(n) never has one at all).
+  // poleIndices alone (degree-5 vertices) isn't enough here: a pentagon-pentagon-adjacent
+  // isomer (n=21-24) has poles that lost a wedge to the shared edge and so aren't degree 5
+  // anymore ("anomalousPoles"), but they're still poles — a hexagon touching only one of
+  // those was being missed by poleIndices and wrongly read as isolated.
   function computeIsolatedHexFaceIndices() {
     if (!state.fullerene || !state.contracted) return new Set();
     const poleSet = new Set(state.contracted.poleIndices);
+    for (const p of state.contracted.anomalousPoles || []) poleSet.add(p);
     const idx = new Set();
     state.fullerene.faces.forEach((f, fi) => {
       if (f.length === 6 && f.every(v => !poleSet.has(state.contracted.mapping[v]))) idx.add(fi);
@@ -171,7 +176,8 @@
     state.fullerene = fullerene;
     state.contracted = {
       poly: cr.poly, mapping: cr.mapping, counts: cr.counts, admissible: cr.admissible,
-      poleCount: cr.poleCount, keptCount: cr.keptCount, poleIndices: computePoleIndices(cr.poly), inv, fvC, fsv, sumCheck
+      poleCount: cr.poleCount, keptCount: cr.keptCount, poleIndices: computePoleIndices(cr.poly),
+      anomalousPoles: cr.anomalousPoles || [], inv, fvC, fsv, sumCheck
     };
     setMsg(invalidMsg(state.invalid), true);
     afterNewPoly(false);
@@ -285,11 +291,10 @@
     lines.push(row('Face-size vector', `{${fsvStr}}`));
     lines.push(rowHtml('ρ (rho)', fmtHit(c.inv.rho, 6, ICOSAHEDRAL_N.has(n))));
     lines.push(rowHtml('ι (iota)', fmtHit(c.inv.iota, 4, ICOSAHEDRAL_N.has(n))));
-    lines.push(row('Poles / kept vertices', `${c.poleCount} / ${c.keptCount}`));
     if (state.invalid) {
       lines.push(rowHtml('Admissible', `<span class="v" style="color:var(--danger);font-weight:700;">${invalidMsg(state.invalid)}</span>`));
     } else {
-      lines.push(row('Σ p(h) check', `${c.sumCheck} (expect 60)${c.sumCheck === 60 ? ' ✓' : ' ✗'}`));
+      lines.push(rowHtml('Admissible', `<span class="v" style="color:var(--ok);font-weight:700;">yes</span>`));
     }
     el.innerHTML = lines.join('');
   }
