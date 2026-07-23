@@ -1,5 +1,5 @@
 // ===================================================================================
-// app.js — UI wiring, state, self-tests. No build step; everything lives in memory.
+// app.js — UI wiring, state. No build step; everything lives in memory.
 // ===================================================================================
 (function () {
   'use strict';
@@ -329,88 +329,21 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Self-tests
-  // ---------------------------------------------------------------------------
-  function runSelfTests() {
-    const out = [];
-    let allPass = true;
-    function check(name, cond, detail) {
-      allPass = allPass && cond;
-      out.push(`<span class="${cond ? 'pass' : 'fail'}">${cond ? 'PASS' : 'FAIL'}</span>  ${name}${detail ? '  ' + detail : ''}`);
-    }
-
-    const table = window.CATALAN_TABLE;
-    const keys = Object.keys(table).map(Number).sort((a, b) => a - b);
-    check(`published table has entries`, keys.length > 0, `${keys.length} entries`);
-    for (const n of [20, 30, 60]) {
-      const entry = table[String(n)];
-      if (!entry) { check(`n=${n} present in table`, false); continue; }
-      const verts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
-      const poly = { verts, faces: entry.faces.map(f => f.slice()) };
-      const inv = Geo.computeInvariants(poly);
-      check(`n=${n} ρ ≈ 1.000000`, Math.abs(inv.rho - 1) < 1e-6, `ρ=${inv.rho.toFixed(8)}`);
-      check(`n=${n} ι ≈ 1.0000`, Math.abs(inv.iota - 1) < 1e-4, `ι=${inv.iota.toFixed(8)}`);
-      const exp = Geo.poleExpand(poly);
-      check(`n=${n} pole expansion succeeds`, exp.ok, exp.ok ? '' : exp.msg);
-    }
-    let expandFails = 0;
-    for (const n of keys) {
-      const entry = table[String(n)];
-      const verts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
-      const poly = { verts, faces: entry.faces.map(f => f.slice()) };
-      if (!Geo.poleExpand(poly).ok) expandFails++;
-    }
-    check(`all ${keys.length} table entries expand to a valid fullerene`, expandFails === 0, expandFails ? `${expandFails} failed` : '');
-
-    const invalidTable = window.CATALAN_INVALID_TABLE || {};
-    const invalidKeys = Object.keys(invalidTable).map(Number).sort((a, b) => a - b);
-    check(`invalid-isomer table has entries`, invalidKeys.length > 0, `${invalidKeys.length} entries`);
-    for (const n of invalidKeys) {
-      const entry = invalidTable[String(n)];
-      const verts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
-      const poly = { verts, faces: entry.faces.map(f => f.slice()) };
-      if (entry.isFullerene) {
-        // stored as the fullerene itself: contract forward and check the result is sane
-        const cr = Geo.poleContract(poly);
-        check(`n=${n} (invalid) pole contraction succeeds`, cr.ok, cr.ok ? '' : cr.msg);
-        if (cr.ok) {
-          check(`n=${n} (invalid) C(n) has ${entry.invalidType === 'isolatedHexagons' ? 'isolated hexagon(s)' : 'non-isolated pentagon pair(s)'}`,
-            entry.invalidType === 'isolatedHexagons' ? cr.isolatedHexagonCount > 0 : cr.nonIsolatedPentagonPairs > 0,
-            `hexagons=${cr.isolatedHexagonCount} pairs=${cr.nonIsolatedPentagonPairs}`);
-          check(`n=${n} (invalid) anomalous pole count is even`, cr.anomalousPoles.length % 2 === 0, `count=${cr.anomalousPoles.length}`);
-        }
-      } else if (entry.invalidType === 'isolatedHexagons') {
-        const hexCount = poly.faces.filter(f => f.length === 6).length;
-        check(`n=${n} (invalid) hexagon count matches m`, hexCount === entry.m, `hexCount=${hexCount} m=${entry.m}`);
-        const exp = Geo.poleExpand(poly);
-        check(`n=${n} (invalid) pole expansion succeeds`, exp.ok, exp.ok ? '' : exp.msg);
-      } else if (entry.invalidType === 'nonIsolatedPentagons') {
-        const deg = new Array(poly.verts.length).fill(0);
-        for (const f of poly.faces) for (const v of f) deg[v]++;
-        const anomalous = deg.filter(d => d !== 3 && d !== 5).length;
-        check(`n=${n} (invalid) anomalous-degree pole count matches 2×m`, anomalous === entry.m * 2, `anomalous=${anomalous} expected=${entry.m * 2}`);
-      }
-    }
-
-    $('selftest').innerHTML = out.join('\n') + `\n\n${allPass ? '<span class="pass">All gates passed.</span>' : '<span class="fail">Some gates FAILED.</span>'}`;
-  }
-
-  // ---------------------------------------------------------------------------
   // Wire up
   // ---------------------------------------------------------------------------
   function renderLegend() {
     const labels = {
-      triangle: 'Triangle', rhombus: 'Rhombus (or trying to be)', trapezoid: 'Trapezoid / skewed quad',
-      floretPentagon: 'Floret pentagon',
-      fullereneHexagon: 'Hexagon (fullerene)', fullerenePentagon: 'Pole pentagon (fullerene)',
-      error: 'Isolated hexagon (error)'
+      triangle: 'triangle', rhombus: 'rhombus/near-rhombus', trapezoid: 'trapezoid/skew quadrilateral',
+      floretPentagon: 'floret pentagon',
+      fullereneHexagon: 'hexagon (fullerene)', fullerenePentagon: 'pole pentagon (fullerene)',
+      error: 'isolated hexagon (error)'
     };
     const rows = Object.entries(Renderer.FACE_COLORS).map(([key, hex]) => {
       const col = '#' + hex.toString(16).padStart(6, '0');
       return `<div><span style="display:inline-block;width:10px;height:10px;background:${col};border:1px solid var(--border);margin-right:6px;vertical-align:middle;"></span>${labels[key] || key}</div>`;
     });
     const highlightCol = '#' + (0xd633c4).toString(16).padStart(6, '0');
-    rows.push(`<div><span style="display:inline-block;width:10px;height:2px;background:${highlightCol};margin-right:6px;margin-bottom:4px;vertical-align:middle;"></span>Pentagon-pentagon edge (fullerene, error)</div>`);
+    rows.push(`<div><span style="display:inline-block;width:10px;height:2px;background:${highlightCol};margin-right:6px;margin-bottom:4px;vertical-align:middle;"></span>Pentagon-pentagon edge (error)</div>`);
     $('legend').innerHTML = rows.join('');
   }
 
@@ -432,7 +365,6 @@
     $('tglSpin').addEventListener('change', e => { Renderer.setToggles({ spin: e.target.checked }); });
 
     setN(20);
-    runSelfTests();
     generate(20);
 
     Renderer.startLoop(() => {

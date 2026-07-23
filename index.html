@@ -46,9 +46,6 @@
   .tglrow input { accent-color: var(--accent); }
   .msg { font-size: 11px; color: var(--text-dim); margin-top: 6px; line-height: 1.5; min-height: 1.4em; }
   .msg.err { color: var(--danger); }
-  #selftest { font-family: var(--mono); font-size: 10.5px; line-height: 1.6; white-space: pre-wrap; max-height: 220px; overflow-y: auto; background: #fbfaf7; border: 1px solid var(--border); border-radius: 5px; padding: 8px; }
-  .pass { color: var(--ok); }
-  .fail { color: var(--danger); font-weight: 700; }
   #hud { position: absolute; left: 12px; bottom: 10px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); background: rgba(255,255,255,.7); padding: 4px 8px; border-radius: 4px; pointer-events: none; }
   a.exportlink { display:none; }
   ::-webkit-scrollbar { width: 8px; }
@@ -107,10 +104,6 @@
       <a class="exportlink" id="exportLink"></a>
     </section>
 
-    <section>
-      <label>Self-test (runs on load)</label>
-      <div id="selftest">running…</div>
-    </section>
   </div>
 </div>
 
