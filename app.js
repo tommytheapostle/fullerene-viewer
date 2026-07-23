@@ -71,7 +71,7 @@
   function invalidMsg(invalid) {
     if (!invalid) return '';
     const label = invalid.type === 'nonIsolatedPentagons' ? 'pentagon-pentagon edges' : 'isolated hexagons';
-    return `invalid: ${label}: ${invalid.m}`;
+    return `no: ${label}: ${invalid.m}`;
   }
 
   // ---------------------------------------------------------------------------
@@ -270,21 +270,21 @@
     if (!state.contracted) { el.innerHTML = ''; return; }
     const n = state.n;
     let lines = [];
-    lines.push(row('n', n));
+    lines.push(row('n:', n));
     if (state.fullerene) {
       const fvF = fVectorOf(state.fullerene);
-      lines.push(row('Fullerene f-vector', `(${fvF.V},${fvF.E},${fvF.F})`));
+      lines.push(row('Fullerene f-vector:', `(${fvF.V},${fvF.E},${fvF.F})`));
     }
     const c = state.contracted;
-    lines.push(row('C(n) f-vector', `(${c.fvC.V},${c.fvC.E},${c.fvC.F})`));
+    lines.push(row('C(n) f-vector:', `(${c.fvC.V},${c.fvC.E},${c.fvC.F})`));
     const fsvStr = Object.keys(c.fsv).sort().map(k => `${k}:${c.fsv[k]}`).join(', ');
-    lines.push(row('Face-size vector', `{${fsvStr}}`));
-    lines.push(rowHtml('ρ (rho)', fmtHit(c.inv.rho, 6)));
-    lines.push(rowHtml('ι (iota)', fmtHit(c.inv.iota, 4)));
+    lines.push(row('Face-size vector:', `{${fsvStr}}`));
+    lines.push(rowHtml('ρ (rho):', fmtHit(c.inv.rho, 6)));
+    lines.push(rowHtml('ι (iota):', fmtHit(c.inv.iota, 4)));
     if (state.invalid) {
-      lines.push(rowHtml('Admissible', `<span class="v" style="color:var(--danger);font-weight:700;">${invalidMsg(state.invalid)}</span>`));
+      lines.push(rowHtml('Admissible?', `<span class="v" style="color:var(--danger);font-weight:700;">${invalidMsg(state.invalid)}</span>`));
     } else {
-      lines.push(rowHtml('Admissible', `<span class="v" style="color:var(--ok);font-weight:700;">yes</span>`));
+      lines.push(rowHtml('Admissible?', `<span class="v" style="color:var(--ok);font-weight:700;">yes</span>`));
     }
     el.innerHTML = lines.join('');
   }
