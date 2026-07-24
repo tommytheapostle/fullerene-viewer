@@ -8,10 +8,13 @@
 
   // Faces are classified by actual shape, not just side count:
   //   C(n) faces: triangle / rhombus (all 4 sides equal, or trying to be) / trapezoid
-  //     (including skewed quads from a pentagon-pentagon defect) / floret pentagon
-  //   fullerene faces (pre-contraction view): hexagon / pole pentagon
+  //     (including skewed quads from a pole-face-adjacency defect) / floret pentagon
+  //   fullerene faces (pre-contraction view): hexagon / pole face — the pole face is
+  //     whatever polygon a valid fullerene's pole gets contracted from (pentagon for
+  //     icosahedral symmetry, square for octahedral), so in fullerene context ANY
+  //     non-hexagon face is unambiguously a pole face, regardless of its side count.
   // The one error marker left is a leftover 6-sided face in C(n) context ("isolated
-  // hexagons" isomers — an admissible C(n) never has one). A "non-isolated pentagons"
+  // hexagons" isomers — an admissible C(n) never has one). A "non-isolated pole faces"
   // defect is flagged differently: as a highlighted edge in the fullerene view (see
   // buildEdgeGeometry/setPoly's highlightEdges param), not by recoloring faces — the C(n)
   // faces around it still get their normal classification, just possibly less regular.
@@ -21,15 +24,15 @@
     trapezoid: 0x4caf6d,       // green
     floretPentagon: 0x3f7fd1,  // blue
     fullereneHexagon: 0xf7f7f2,  // white
-    fullerenePentagon: 0x1a1a1a, // black
+    fullerenePoleFace: 0x1a1a1a, // black
     error: 0xd633c4              // magenta
   };
   const EDGE_COLOR = 0x3a352c;
-  const EDGE_HIGHLIGHT_COLOR = 0xd633c4; // magenta, marks a pentagon-pentagon adjacency edge
+  const EDGE_HIGHLIGHT_COLOR = 0xd633c4; // magenta, marks a pole-face adjacency edge
   const POLE_COLOR = 0x24211b;
 
   // Which face-context a poly is being viewed in must be passed explicitly rather than
-  // inferred from its faces — a fullerene has only pentagon/hexagon faces, but a C(n)
+  // inferred from its faces — a fullerene has only pole-face/hexagon faces, but a C(n)
   // (specifically an "invalid: isolated hexagons" one) can ALSO contain a hexagon face,
   // so hexagon-presence alone can't tell the two apart. In C(n) context every hexagon face
   // IS an isolated one (an admissible C(n) never has any); in fullerene context only the
@@ -38,12 +41,13 @@
   // contexts instead of the magenta error color.
   function classifyFace(poly, face, faceIndex, isFullereneCtx, isolatedHexFaceIndices) {
     const n = face.length;
-    if (n === 6) {
-      const isIsolated = isFullereneCtx ? !!(isolatedHexFaceIndices && isolatedHexFaceIndices.has(faceIndex)) : true;
-      if (isIsolated) return toggles.highlightIsolatedHex ? 'error' : 'fullereneHexagon';
-      return 'fullereneHexagon';
+    if (isFullereneCtx) {
+      if (n !== 6) return 'fullerenePoleFace';
+      const isIsolated = !!(isolatedHexFaceIndices && isolatedHexFaceIndices.has(faceIndex));
+      return (isIsolated && toggles.highlightIsolatedHex) ? 'error' : 'fullereneHexagon';
     }
-    if (n === 5) return isFullereneCtx ? 'fullerenePentagon' : 'floretPentagon';
+    if (n === 6) return toggles.highlightIsolatedHex ? 'error' : 'fullereneHexagon'; // isolated-hexagon survivor
+    if (n === 5) return 'floretPentagon';
     if (n === 3) return 'triangle';
     if (n === 4) {
       // A quad "trying to be" a rhombus reads as one even with modest deviation — these

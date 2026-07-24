@@ -64,11 +64,19 @@
   </div>
   <div id="panel">
     <h1>Fullerene → Catalan-like solid</h1>
-    <div class="sub">σ contracts the 12 pentagons of C<sub>2n+20</sub> to poles, producing C(n)</div>
+    <div class="sub" id="modeSubtitle">σ contracts the 12 pentagons of C<sub>2n+20</sub> to poles, producing C(n)</div>
     <div class="sub" style="margin-top:-10px;"><a href="https://www.researchgate.net/publication/408475450_A_Generalization_of_Catalan_Solids" target="_blank" rel="noopener" style="color:inherit;">Reference: A Generalization of Catalan Solids ↗</a></div>
 
     <section>
-      <label for="nInput">n — hexagon count (20–60)</label>
+      <label>Symmetry</label>
+      <div class="btnrow">
+        <button id="modeIcoBtn" class="toggle active">Icosahedral</button>
+        <button id="modeOctBtn" class="toggle">Octahedral</button>
+      </div>
+    </section>
+
+    <section>
+      <label for="nInput" id="nRangeLabel">n — hexagon count (20–60)</label>
       <div class="row">
         <input type="range" id="nSlider" min="20" max="60" step="1" value="20">
         <input type="number" id="nInput" min="20" max="60" step="1" value="20">
@@ -79,7 +87,11 @@
     </section>
 
     <section>
-      <button id="contractBtn" class="primary" style="width:100%; padding:10px; font-size:13px;">Contract poles →</button>
+      <label>View</label>
+      <div class="btnrow">
+        <button id="viewFullereneBtn" class="toggle active">Fullerene</button>
+        <button id="viewContractedBtn" class="toggle">Contracted C(n)</button>
+      </div>
     </section>
 
     <section>
@@ -92,7 +104,7 @@
       <label>Display</label>
       <div class="tglrow"><span>Show edges</span><input type="checkbox" id="tglEdges" checked></div>
       <div class="tglrow"><span>Show midsphere</span><input type="checkbox" id="tglSphere"></div>
-      <div class="tglrow"><span>Mark poles (deg-5)</span><input type="checkbox" id="tglPoles"></div>
+      <div class="tglrow"><span id="polesLabel">Mark poles (deg-5)</span><input type="checkbox" id="tglPoles"></div>
       <div class="tglrow"><span>Auto-rotate</span><input type="checkbox" id="tglSpin"></div>
       <div class="tglrow"><span>Highlight isolated hexagons</span><input type="checkbox" id="tglIsolatedHex" checked></div>
       <div class="tglrow"><span>Color faces by shape</span><input type="checkbox" id="tglColor" checked></div>
@@ -111,6 +123,7 @@
 <script src="three.min.js"></script>
 <script src="catalan_data.js"></script>
 <script src="catalan_invalid_data.js"></script>
+<script src="oct_data.js"></script>
 <script src="geometry.js"></script>
 <script src="render.js"></script>
 <script src="app.js"></script>

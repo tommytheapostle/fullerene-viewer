@@ -11,42 +11,45 @@
 (function (global) {
   'use strict';
 
-  // Contract each pentagon of a fullerene to its centroid pole, producing C(n). Each of the
-  // 12 pentagons always gets its own pole, even under non-IPR adjacency — a vertex shared by
-  // two pentagons (an edge where they touch) is assigned to whichever pentagon claims it
-  // first; which one doesn't matter topologically, since either choice yields the same
-  // face-size distribution and pole-degree pattern (verified against a hand-solved example).
-  // The pentagon(s) on the losing side of that assignment simply end up with a pole of degree
-  // 4 instead of 5 — the ordinary corner-collapsing below accounts for the "lost" wedge on its
-  // own, with no special-casing needed. An isolated hexagon (touching no pentagon at all)
-  // likewise survives unchanged as a 6-sided face rather than erroring.
-  function poleContract(fullerene) {
+  // Contract each pole face (a pentagon for icosahedral symmetry, a square for octahedral) of
+  // a fullerene-like trivalent polyhedron to its centroid pole, producing C(n). Each pole face
+  // always gets its own pole, even under non-IPR adjacency — a vertex shared by two pole faces
+  // (an edge where they touch) is assigned to whichever claims it first; which one doesn't
+  // matter topologically, since either choice yields the same face-size distribution and
+  // pole-degree pattern (verified against a hand-solved icosahedral example). The pole face(s)
+  // on the losing side of that assignment simply end up with a pole of degree (poleDegree - 1)
+  // instead of poleDegree — the ordinary corner-collapsing below accounts for the "lost" wedge
+  // on its own, with no special-casing needed. An isolated hexagon (touching no pole face at
+  // all) likewise survives unchanged as a 6-sided face rather than erroring.
+  function poleContract(fullerene, opts) {
+    const poleDegree = (opts && opts.poleDegree) || 5;
+    const expectedPoleCount = (opts && opts.expectedPoleCount) || 12;
     const nv = fullerene.verts.length;
-    const pentagonFaces = [];
-    for (let fi = 0; fi < fullerene.faces.length; fi++) if (fullerene.faces[fi].length === 5) pentagonFaces.push(fi);
-    if (pentagonFaces.length !== 12) return { ok: false, msg: `expected 12 pentagons, found ${pentagonFaces.length}` };
+    const poleFaces = [];
+    for (let fi = 0; fi < fullerene.faces.length; fi++) if (fullerene.faces[fi].length === poleDegree) poleFaces.push(fi);
+    if (poleFaces.length !== expectedPoleCount) return { ok: false, msg: `expected ${expectedPoleCount} ${poleDegree}-gons, found ${poleFaces.length}` };
 
-    const vertexPentagon = new Array(nv).fill(-1);
-    for (const fi of pentagonFaces) {
+    const vertexPole = new Array(nv).fill(-1);
+    for (const fi of poleFaces) {
       for (const v of fullerene.faces[fi]) {
-        if (vertexPentagon[v] === -1) vertexPentagon[v] = fi;
+        if (vertexPole[v] === -1) vertexPole[v] = fi;
       }
     }
 
     const poleId = new Map(), keepId = new Map();
     const newVerts = [];
-    for (const fi of pentagonFaces) {
+    for (const fi of poleFaces) {
       const sum = new THREE.Vector3();
       for (const v of fullerene.faces[fi]) sum.add(fullerene.verts[v]);
       poleId.set(fi, newVerts.length);
-      newVerts.push(sum.multiplyScalar(1 / 5).normalize());
+      newVerts.push(sum.multiplyScalar(1 / poleDegree).normalize());
     }
-    for (let v = 0; v < nv; v++) if (vertexPentagon[v] === -1) { keepId.set(v, newVerts.length); newVerts.push(fullerene.verts[v].clone()); }
-    const mapVert = v => vertexPentagon[v] !== -1 ? poleId.get(vertexPentagon[v]) : keepId.get(v);
+    for (let v = 0; v < nv; v++) if (vertexPole[v] === -1) { keepId.set(v, newVerts.length); newVerts.push(fullerene.verts[v].clone()); }
+    const mapVert = v => vertexPole[v] !== -1 ? poleId.get(vertexPole[v]) : keepId.get(v);
 
     const newFaces = [];
     for (let fi = 0; fi < fullerene.faces.length; fi++) {
-      if (fullerene.faces[fi].length === 5) continue;
+      if (fullerene.faces[fi].length === poleDegree) continue;
       const mapped = fullerene.faces[fi].map(mapVert);
       const collapsed = [];
       for (const v of mapped) if (collapsed.length === 0 || collapsed[collapsed.length - 1] !== v) collapsed.push(v);
@@ -54,17 +57,17 @@
       newFaces.push(collapsed);
     }
 
-    // Non-isolated-pentagon edges: the fullerene edges directly shared by two pentagons.
+    // Non-isolated-pole-face edges: the fullerene edges directly shared by two pole faces.
     // Each such edge is what gets highlighted in the fullerene view as the visible defect.
-    const pentEdgeOwner = new Map();
+    const poleEdgeOwner = new Map();
     const nonIsolatedPentagonEdges = [];
-    for (const fi of pentagonFaces) {
+    for (const fi of poleFaces) {
       const f = fullerene.faces[fi];
       for (let i = 0; i < f.length; i++) {
         const a = f[i], b = f[(i + 1) % f.length];
         const key = Math.min(a, b) + '_' + Math.max(a, b);
-        if (pentEdgeOwner.has(key)) nonIsolatedPentagonEdges.push([a, b]);
-        else pentEdgeOwner.set(key, fi);
+        if (poleEdgeOwner.has(key)) nonIsolatedPentagonEdges.push([a, b]);
+        else poleEdgeOwner.set(key, fi);
       }
     }
     const nonIsolatedPentagonPairs = nonIsolatedPentagonEdges.length;
@@ -74,35 +77,41 @@
     for (const f of newFaces) {
       if (f.length === 3) counts.a3++; else if (f.length === 4) counts.a4++; else if (f.length === 5) counts.a5++; else counts.other++;
     }
-    const isolatedHexagonCount = counts.other; // a face of size!=3,4,5 after contraction means an isolated (p=0) hexagon survived
+    // A face of size other than 3/4/5 after contraction means an isolated (p=0) hexagon
+    // survived — true regardless of poleDegree, since a collapsed pole-adjacent face is always
+    // smaller than its original hexagon (max hexagon shrink is to a triangle).
+    const isolatedHexagonCount = counts.other;
     const admissible = isolatedHexagonCount === 0 && nonIsolatedPentagonPairs === 0;
     const mapping = new Array(nv);
     for (let v = 0; v < nv; v++) mapping[v] = mapVert(v);
 
-    // Poles whose final degree isn't 5 are exactly the ones that lost a wedge to a
-    // pentagon-pentagon edge — useful for flagging the defect faces around them.
-    const poleDegree = new Array(pentagonFaces.length).fill(0);
-    for (const f of newFaces) for (const v of f) if (v < pentagonFaces.length) poleDegree[v]++;
-    const anomalousPoles = poleDegree.reduce((s, d, i) => (d !== 5 ? s.concat(i) : s), []);
+    // Poles whose final degree isn't poleDegree are exactly the ones that lost a wedge to a
+    // pole-face-adjacency edge — useful for flagging the defect faces around them.
+    const finalPoleDegree = new Array(poleFaces.length).fill(0);
+    for (const f of newFaces) for (const v of f) if (v < poleFaces.length) finalPoleDegree[v]++;
+    const anomalousPoles = finalPoleDegree.reduce((s, d, i) => (d !== poleDegree ? s.concat(i) : s), []);
 
     return {
-      ok: true, poly, poleCount: pentagonFaces.length, keptCount: keepId.size, counts, admissible, mapping,
+      ok: true, poly, poleCount: poleFaces.length, keptCount: keepId.size, counts, admissible, mapping,
       isolatedHexagonCount, nonIsolatedPentagonPairs, nonIsolatedPentagonEdges, anomalousPoles
     };
   }
 
-  // Reverse of poleContract: given C(n) (with 12 degree-5 poles), reconstruct a fullerene
-  // by expanding each pole into a pentagon of 5 new vertices. For a pole P touching faces
-  // in cyclic order F_0..F_4 (F_w between neighbours[w] and neighbours[w+1]), F_w gets P
-  // replaced by (p_w, p_{w+1}) — this is exactly the inverse of the collapse used above,
-  // and produces a topologically valid fullerene (checked before returning).
-  function poleExpand(poly) {
+  // Reverse of poleContract: given C(n) (with `expectedPoleCount` degree-`poleDegree` poles),
+  // reconstruct a fullerene by expanding each pole into a poleDegree-gon of poleDegree new
+  // vertices. For a pole P touching faces in cyclic order F_0..F_{d-1} (F_w between
+  // neighbours[w] and neighbours[w+1]), F_w gets P replaced by (p_w, p_{w+1}) — this is
+  // exactly the inverse of the collapse used above, and produces a topologically valid
+  // fullerene (checked before returning).
+  function poleExpand(poly, opts) {
+    const poleDegree = (opts && opts.poleDegree) || 5;
+    const expectedPoleCount = (opts && opts.expectedPoleCount) || 12;
     const nv = poly.verts.length;
     const degree = new Array(nv).fill(0);
     for (const f of poly.faces) for (const v of f) degree[v]++;
     const poles = [];
-    for (let v = 0; v < nv; v++) if (degree[v] === 5) poles.push(v);
-    if (poles.length !== 12) return { ok: false, msg: `expected 12 degree-5 vertices, found ${poles.length}` };
+    for (let v = 0; v < nv; v++) if (degree[v] === poleDegree) poles.push(v);
+    if (poles.length !== expectedPoleCount) return { ok: false, msg: `expected ${expectedPoleCount} degree-${poleDegree} vertices, found ${poles.length}` };
 
     const poleData = new Map();
     for (const P of poles) {
@@ -114,17 +123,17 @@
         const n = f.length;
         recs.push([f[(idx - 1 + n) % n], f[(idx + 1) % n], fi]);
       }
-      if (recs.length !== 5) return { ok: false, msg: `pole ${P} touches ${recs.length} faces, expected 5` };
+      if (recs.length !== poleDegree) return { ok: false, msg: `pole ${P} touches ${recs.length} faces, expected ${poleDegree}` };
       const map = new Map();
       for (const r of recs) map.set(r[0], [r[1], r[2]]);
       const start = recs[0][0];
       const neighbors = [start];
       const faceSeq = [];
       let cur = start;
-      for (let step = 0; step < 5; step++) {
+      for (let step = 0; step < poleDegree; step++) {
         const [nxt, fi] = map.get(cur);
         faceSeq.push(fi);
-        if (step < 4) neighbors.push(nxt);
+        if (step < poleDegree - 1) neighbors.push(nxt);
         cur = nxt;
       }
       poleData.set(P, { neighbors, faceSeq });
@@ -132,26 +141,26 @@
 
     const newVerts = [];
     const keepId = new Map();
-    for (let v = 0; v < nv; v++) if (degree[v] !== 5) { keepId.set(v, newVerts.length); newVerts.push(poly.verts[v].clone()); }
+    for (let v = 0; v < nv; v++) if (degree[v] !== poleDegree) { keepId.set(v, newVerts.length); newVerts.push(poly.verts[v].clone()); }
     const poleNewIds = new Map();
     for (const P of poles) {
       const pd = poleData.get(P);
       const ids = [];
-      // seed each of the 5 new vertices distinctly (nudged toward its own external neighbour)
-      // rather than all 5 coincident at the pole's position — a degenerate coincident start
-      // gives the canonicalize polish nothing to work with.
-      for (let i = 0; i < 5; i++) {
+      // seed each of the poleDegree new vertices distinctly (nudged toward its own external
+      // neighbour) rather than all coincident at the pole's position — a degenerate coincident
+      // start gives the canonicalize polish nothing to work with.
+      for (let i = 0; i < poleDegree; i++) {
         ids.push(newVerts.length);
         const nb = poly.verts[pd.neighbors[i]];
         newVerts.push(poly.verts[P].clone().lerp(nb, 0.35).normalize());
       }
       poleNewIds.set(P, ids);
     }
-    // wedge lookup: for pole P and face fi, which wedge index (0..4) is this occurrence
+    // wedge lookup: for pole P and face fi, which wedge index (0..poleDegree-1) is this occurrence
     const wedgeOf = new Map(); // "P_fi" -> j
     for (const P of poles) {
       const pd = poleData.get(P);
-      for (let j = 0; j < 5; j++) wedgeOf.set(P + '_' + pd.faceSeq[j], j);
+      for (let j = 0; j < poleDegree; j++) wedgeOf.set(P + '_' + pd.faceSeq[j], j);
     }
 
     const rebuilt = [];
@@ -160,17 +169,17 @@
       const out = [];
       for (let i = 0; i < f.length; i++) {
         const v = f[i];
-        if (degree[v] !== 5) { out.push(keepId.get(v)); continue; }
+        if (degree[v] !== poleDegree) { out.push(keepId.get(v)); continue; }
         const j = wedgeOf.get(v + '_' + fi);
         const ids = poleNewIds.get(v);
-        out.push(ids[j], ids[(j + 1) % 5]);
+        out.push(ids[j], ids[(j + 1) % poleDegree]);
       }
       rebuilt.push(out);
     }
     for (const P of poles) rebuilt.push(poleNewIds.get(P).slice());
 
     const fullerene = { verts: newVerts, faces: rebuilt };
-    const check = validateFullereneTopology(fullerene, newVerts.length);
+    const check = validateFullereneTopology(fullerene, newVerts.length, { poleDegree, expectedPoleCount });
     return { ok: check.ok, fullerene, msg: check.ok ? 'ok' : 'expanded topology failed validation', keepId, poleNewIds, poles };
   }
 
@@ -370,7 +379,9 @@
     return { rho: areaMax / areaMin, iota: dMin / dMax, areaMin, areaMax, dMin, dMax, counts };
   }
 
-  function validateFullereneTopology(poly, expectV) {
+  function validateFullereneTopology(poly, expectV, opts) {
+    const poleDegree = (opts && opts.poleDegree) || 5;
+    const expectedPoleCount = (opts && opts.expectedPoleCount) || 12;
     const faces = poly.faces;
     const nv = poly.verts.length;
     if (nv !== expectV) return { ok: false };
@@ -389,9 +400,9 @@
     const deg = new Array(nv).fill(0);
     for (const key of edgeCount.keys()) { const [a, b] = key.split('_').map(Number); deg[a]++; deg[b]++; }
     if (!deg.every(d => d === 3)) return { ok: false };
-    let p5 = 0, other = 0;
-    for (const f of faces) { if (f.length === 5) p5++; else if (f.length !== 6) other++; }
-    if (p5 !== 12 || other !== 0) return { ok: false };
+    let poleFaceCount = 0, other = 0;
+    for (const f of faces) { if (f.length === poleDegree) poleFaceCount++; else if (f.length !== 6) other++; }
+    if (poleFaceCount !== expectedPoleCount || other !== 0) return { ok: false };
     return { ok: true };
   }
 

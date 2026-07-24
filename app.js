@@ -4,7 +4,40 @@
 (function () {
   'use strict';
 
+  // Global symmetry mode: icosahedral (12 pentagon poles, degree 5) is the original mode;
+  // octahedral (6 square poles, degree 4) reuses the same C(n)-contraction pipeline against
+  // a different admissible-solution table. Octahedral has no raw-fullerene reconstruction
+  // data yet (off_data only has the already-contracted solids), so fullereneAvailable gates
+  // that off until such data shows up.
+  const MODES = {
+    ico: {
+      key: 'ico', label: 'Icosahedral',
+      nMin: 20, nMax: 60, nDefault: 20,
+      poleDegree: 5, poleCount: 12, poleShapeName: 'pentagon',
+      fullereneAvailable: true,
+      table: () => window.CATALAN_TABLE,
+      invalidTable: () => window.CATALAN_INVALID_TABLE,
+      subtitleHtml: 'σ contracts the 12 pentagons of C<sub>2n+20</sub> to poles, producing C(n)',
+      nRangeLabel: 'n — hexagon count (20–60)',
+      exportFullerenePrefix: 'fullerene_C',
+      fullereneVertexCount: n => 2 * n + 20
+    },
+    oct: {
+      key: 'oct', label: 'Octahedral',
+      nMin: 8, nMax: 24, nDefault: 8,
+      poleDegree: 4, poleCount: 6, poleShapeName: 'square',
+      fullereneAvailable: true,
+      table: () => window.OCT_TABLE,
+      invalidTable: () => null,
+      subtitleHtml: 'σ contracts the 6 squares of C<sub>2n+8</sub> to poles, producing C(n)',
+      nRangeLabel: 'n — hexagon count (8–24)',
+      exportFullerenePrefix: 'oct_fullerene_C',
+      fullereneVertexCount: n => 2 * n + 8
+    }
+  };
+
   const state = {
+    mode: 'ico',
     n: 20,
     fullerene: null,          // reconstructed fullerene Poly, or null when unreconstructable
     contracted: null,         // {poly, mapping, counts, admissible, poleCount, keptCount, poleIndices, inv, fvC, fsv, sumCheck}
@@ -16,16 +49,17 @@
   let lastGeneratedN = null;  // last n actually rendered, vs state.n which tracks the slider
 
   const $ = id => document.getElementById(id);
+  const curMode = () => MODES[state.mode];
 
-  // The true poles of a C(n)-like poly are exactly its degree-5 vertices — this must be
-  // computed from actual topology rather than assumed to be indices 0..11: that range only
-  // holds for data we contracted ourselves (poleContract always pushes poles first), not for
-  // published coordinate files, whose vertex order carries no such guarantee.
-  function computePoleIndices(poly) {
+  // The true poles of a C(n)-like poly are exactly its degree-`poleDegree` vertices — this
+  // must be computed from actual topology rather than assumed to be indices 0..(poleCount-1):
+  // that range only holds for data we contracted ourselves (poleContract always pushes poles
+  // first), not for published coordinate files, whose vertex order carries no such guarantee.
+  function computePoleIndices(poly, poleDegree) {
     const deg = new Array(poly.verts.length).fill(0);
     for (const f of poly.faces) for (const v of f) deg[v]++;
     const idx = [];
-    for (let v = 0; v < poly.verts.length; v++) if (deg[v] === 5) idx.push(v);
+    for (let v = 0; v < poly.verts.length; v++) if (deg[v] === poleDegree) idx.push(v);
     return idx;
   }
 
@@ -71,7 +105,8 @@
 
   function invalidMsg(invalid) {
     if (!invalid) return '';
-    const label = invalid.type === 'nonIsolatedPentagons' ? 'pentagon-pentagon edges' : 'isolated hexagons';
+    const shape = curMode().poleShapeName;
+    const label = invalid.type === 'nonIsolatedPentagons' ? `${shape}-${shape} edges` : 'isolated hexagons';
     return `no: ${label}: ${invalid.m}`;
   }
 
@@ -85,14 +120,20 @@
   // directly edge-adjacent to each other), so that case is shown as C(n) only.
   // ---------------------------------------------------------------------------
   function reasonForN(n) {
-    if (window.CATALAN_TABLE[String(n)]) return '';
-    if (window.CATALAN_INVALID_TABLE && window.CATALAN_INVALID_TABLE[String(n)]) return '';
+    const mode = curMode();
+    const table = mode.table() || {};
+    if (table[String(n)]) return '';
+    const invalidTable = mode.invalidTable();
+    if (invalidTable && invalidTable[String(n)]) return '';
     return 'No published coordinates for this n yet.';
   }
 
   function generate(n) {
-    const validEntry = window.CATALAN_TABLE[String(n)];
-    const invalidEntry = window.CATALAN_INVALID_TABLE && window.CATALAN_INVALID_TABLE[String(n)];
+    const mode = curMode();
+    const table = mode.table() || {};
+    const invalidTable = mode.invalidTable();
+    const validEntry = table[String(n)];
+    const invalidEntry = invalidTable && invalidTable[String(n)];
     const entry = validEntry || invalidEntry;
     if (!entry) { setMsg(reasonForN(n) || `No data for n=${n}.`, true); return; }
 
@@ -115,17 +156,17 @@
     const fvC = fVectorOf(cPoly);
     const fsv = faceSizeVector(cPoly);
     const sumCheck = Object.entries(fsv).reduce((s, [k, v]) => s + (6 - Number(k)) * v, 0);
-    const poleIndices = computePoleIndices(cPoly);
+    const poleIndices = computePoleIndices(cPoly, mode.poleDegree);
     const contractedBase = {
       poly: cPoly, counts: countFaceTypes(cPoly), admissible: !invalidEntry,
-      poleCount: 12, keptCount: fvC.V - 12, poleIndices, inv, fvC, fsv, sumCheck
+      poleCount: poleIndices.length, keptCount: fvC.V - poleIndices.length, poleIndices, inv, fvC, fsv, sumCheck
     };
 
     state.invalid = invalidEntry ? { type: invalidEntry.invalidType, m: invalidEntry.m } : null;
     state.highlightEdges = null;
 
-    const attemptReconstruction = !invalidEntry || invalidEntry.invalidType === 'isolatedHexagons';
-    const exp = attemptReconstruction ? Geo.poleExpand(cPoly) : null;
+    const attemptReconstruction = mode.fullereneAvailable && (!invalidEntry || invalidEntry.invalidType === 'isolatedHexagons');
+    const exp = attemptReconstruction ? Geo.poleExpand(cPoly, { poleDegree: mode.poleDegree, expectedPoleCount: mode.poleCount }) : null;
 
     if (exp && exp.ok) {
       const fullerene = exp.fullerene;
@@ -161,7 +202,8 @@
     Geo.fixOrientationConsistency(fullerene);
     Geo.canonicalize(fullerene, 5000, 1e-13);
 
-    const cr = Geo.poleContract(fullerene);
+    const mode = curMode();
+    const cr = Geo.poleContract(fullerene, { poleDegree: mode.poleDegree, expectedPoleCount: mode.poleCount });
     if (!cr.ok) { setMsg('Pole contraction failed: ' + cr.msg, true); return; }
     Geo.canonicalize(cr.poly, 20000, 1e-13);
 
@@ -175,7 +217,7 @@
     state.fullerene = fullerene;
     state.contracted = {
       poly: cr.poly, mapping: cr.mapping, counts: cr.counts, admissible: cr.admissible,
-      poleCount: cr.poleCount, keptCount: cr.keptCount, poleIndices: computePoleIndices(cr.poly),
+      poleCount: cr.poleCount, keptCount: cr.keptCount, poleIndices: computePoleIndices(cr.poly, mode.poleDegree),
       anomalousPoles: cr.anomalousPoles || [], inv, fvC, fsv, sumCheck
     };
     // Admissibility (if any) is shown once, in the readout's "Admissible?" row — not here too.
@@ -204,16 +246,20 @@
     } else {
       Renderer.setPoly(state.fullerene, null, true, state.highlightEdges, computeIsolatedHexFaceIndices());
     }
-    updateContractBtn();
+    updateViewButtons();
     updateReadout();
   }
 
   // ---------------------------------------------------------------------------
-  // Pole-contraction animation
+  // Pole-contraction animation — driven by the two view buttons (Fullerene /
+  // Contract poles) rather than a single toggle, so each is a direct "go to this
+  // view" request instead of a relative flip.
   // ---------------------------------------------------------------------------
-  function toggleContraction() {
-    if (!state.fullerene || !state.contracted || state.animating) return;
-    const turningOn = !state.contractedOn;
+  function setView(wantContracted) {
+    if (!state.contracted || state.animating) return;
+    if (wantContracted === state.contractedOn) return;
+    if (!wantContracted && !state.fullerene) return; // no fullerene data to show in this mode/isomer
+    const turningOn = wantContracted;
     state.animating = true;
     const duration = 600;
     const t0 = performance.now();
@@ -242,26 +288,31 @@
         } else {
           Renderer.setPoly(state.fullerene, null, true, state.highlightEdges, computeIsolatedHexFaceIndices());
         }
-        updateContractBtn();
+        updateViewButtons();
         updateReadout();
       }
     }
     requestAnimationFrame(frame);
   }
 
-  function updateContractBtn() {
-    const btn = $('contractBtn');
+  function updateViewButtons() {
+    const fullereneBtn = $('viewFullereneBtn');
+    const contractedBtn = $('viewContractedBtn');
+    fullereneBtn.disabled = !state.fullerene;
     if (!state.fullerene) {
-      btn.textContent = 'Contract poles →';
-      btn.disabled = true;
-      btn.title = state.invalid && state.invalid.type === 'nonIsolatedPentagons'
-        ? "Fullerene reconstruction isn't available for this non-IPR isomer — the two adjacent pentagon poles can't be unambiguously expanded back from the contracted data alone."
-        : '';
+      const shape = curMode().poleShapeName;
+      fullereneBtn.title = !curMode().fullereneAvailable
+        ? `Fullerene reconstruction data isn't available yet for ${curMode().label.toLowerCase()} mode.`
+        : (state.invalid && state.invalid.type === 'nonIsolatedPentagons'
+          ? `Fullerene reconstruction isn't available for this non-IPR isomer — the two adjacent ${shape} poles can't be unambiguously expanded back from the contracted data alone.`
+          : '');
     } else {
-      btn.textContent = state.contractedOn ? '← Expand to fullerene' : 'Contract poles →';
-      btn.disabled = false;
-      btn.title = '';
+      fullereneBtn.title = '';
     }
+    contractedBtn.disabled = false;
+    contractedBtn.title = '';
+    fullereneBtn.classList.toggle('active', !state.contractedOn);
+    contractedBtn.classList.toggle('active', state.contractedOn);
   }
 
   // ---------------------------------------------------------------------------
@@ -311,12 +362,33 @@
   }
 
   function setN(n) {
-    n = Math.max(20, Math.min(60, Math.round(n)));
+    const mode = curMode();
+    n = Math.max(mode.nMin, Math.min(mode.nMax, Math.round(n)));
     state.n = n;
     $('nSlider').value = n;
     $('nInput').value = n;
     updateNAvailability();
     updateGenerateDirty();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Symmetry mode switching
+  // ---------------------------------------------------------------------------
+  function switchMode(modeKey) {
+    if (state.mode === modeKey || state.animating) return;
+    state.mode = modeKey;
+    const mode = curMode();
+    $('modeIcoBtn').classList.toggle('active', modeKey === 'ico');
+    $('modeOctBtn').classList.toggle('active', modeKey === 'oct');
+    $('modeSubtitle').innerHTML = mode.subtitleHtml;
+    $('nRangeLabel').textContent = mode.nRangeLabel;
+    $('nSlider').min = mode.nMin; $('nSlider').max = mode.nMax;
+    $('nInput').min = mode.nMin; $('nInput').max = mode.nMax;
+    $('polesLabel').textContent = `Mark poles (deg-${mode.poleDegree})`;
+    renderLegend();
+    state.contractedOn = true; // reset to the view guaranteed to exist in the new mode
+    setN(mode.nDefault);
+    generate(mode.nDefault);
   }
 
   // Flags the Generate button whenever the slider/input value has moved away from
@@ -339,7 +411,7 @@
     const url = URL.createObjectURL(blob);
     const a = $('exportLink');
     a.href = url;
-    a.download = `${state.contractedOn ? 'C' + state.n : 'fullerene_C' + (2 * state.n + 20)}.off`;
+    a.download = `${state.contractedOn ? 'C' + state.n : curMode().exportFullerenePrefix + curMode().fullereneVertexCount(state.n)}.off`;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
@@ -348,10 +420,11 @@
   // Wire up
   // ---------------------------------------------------------------------------
   function renderLegend() {
+    const shape = curMode().poleShapeName;
     const labels = {
       triangle: 'triangle', rhombus: 'rhombus/near-rhombus', trapezoid: 'trapezoid/skew quadrilateral',
       floretPentagon: 'floret pentagon',
-      fullereneHexagon: 'hexagon (fullerene)', fullerenePentagon: 'pole pentagon (fullerene)',
+      fullereneHexagon: 'hexagon (fullerene)', fullerenePoleFace: `pole ${shape} (fullerene)`,
       error: 'isolated hexagon (error)'
     };
     const rows = Object.entries(Renderer.FACE_COLORS).map(([key, hex]) => {
@@ -359,7 +432,7 @@
       return `<div><span style="display:inline-block;width:10px;height:10px;background:${col};border:1px solid var(--border);margin-right:6px;vertical-align:middle;"></span>${labels[key] || key}</div>`;
     });
     const highlightCol = '#' + (0xd633c4).toString(16).padStart(6, '0');
-    rows.push(`<div><span style="display:inline-block;width:10px;height:2px;background:${highlightCol};margin-right:6px;margin-bottom:4px;vertical-align:middle;"></span>pentagon-pentagon edge (error)</div>`);
+    rows.push(`<div><span style="display:inline-block;width:10px;height:2px;background:${highlightCol};margin-right:6px;margin-bottom:4px;vertical-align:middle;"></span>${shape}-${shape} edge (error)</div>`);
     $('legend').innerHTML = rows.join('');
   }
 
@@ -373,7 +446,10 @@
     $('nSlider').addEventListener('input', e => setN(+e.target.value));
     $('nInput').addEventListener('change', e => setN(+e.target.value));
     $('generateBtn').addEventListener('click', () => generate(state.n));
-    $('contractBtn').addEventListener('click', toggleContraction);
+    $('modeIcoBtn').addEventListener('click', () => switchMode('ico'));
+    $('modeOctBtn').addEventListener('click', () => switchMode('oct'));
+    $('viewFullereneBtn').addEventListener('click', () => setView(false));
+    $('viewContractedBtn').addEventListener('click', () => setView(true));
     $('exportBtn').addEventListener('click', exportOFF);
 
     $('tglColor').addEventListener('change', e => { Renderer.setToggles({ color: e.target.checked }); });
@@ -388,7 +464,7 @@
 
     Renderer.startLoop(() => {
       $('hud').textContent = state.contracted
-        ? `${state.contractedOn ? 'C(' + state.n + ')' : 'C' + (2 * state.n + 20) + ' fullerene'} — drag to orbit, scroll to zoom`
+        ? `${state.contractedOn ? 'C(' + state.n + ')' : 'C' + curMode().fullereneVertexCount(state.n) + ' fullerene'} — drag to orbit, scroll to zoom`
         : '';
     });
   }
