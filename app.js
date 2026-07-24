@@ -13,6 +13,7 @@
     invalid: null,            // null | {type: 'nonIsolatedPentagons'|'isolatedHexagons', m}
     highlightEdges: null      // fullerene-view-only: [a,b] vertex pairs marking a pentagon-pentagon edge
   };
+  let lastGeneratedN = null;  // last n actually rendered, vs state.n which tracks the slider
 
   const $ = id => document.getElementById(id);
 
@@ -95,10 +96,15 @@
     const entry = validEntry || invalidEntry;
     if (!entry) { setMsg(reasonForN(n) || `No data for n=${n}.`, true); return; }
 
+    // Preserve whichever view (fullerene vs. contracted C(n)) the user was already looking
+    // at — regenerating for a new n shouldn't silently kick them back to the fullerene view.
+    const wantContracted = state.contractedOn;
     state.n = n;
+    lastGeneratedN = n;
+    updateGenerateDirty();
 
     if (invalidEntry && invalidEntry.isFullerene) {
-      generateFromFullerene(n, invalidEntry);
+      generateFromFullerene(n, invalidEntry, wantContracted);
       return;
     }
 
@@ -130,16 +136,17 @@
       for (const P of exp.poles) for (const newId of exp.poleNewIds.get(P)) fullMapping[newId] = P;
       state.fullerene = fullerene;
       state.contracted = Object.assign({ mapping: fullMapping }, contractedBase);
-      setMsg(invalidMsg(state.invalid), !!state.invalid);
-      afterNewPoly(false);
+      // Admissibility (if any) is shown once, in the readout's "Admissible?" row — not here too.
+      setMsg('', false);
+      afterNewPoly(wantContracted);
     } else {
       // No fullerene reconstruction: either not attempted (non-isolated-pentagons —
       // the two anomalous poles can't be unambiguously expanded from contracted
       // data alone) or it unexpectedly failed. Show C(n) itself directly.
       state.fullerene = null;
       state.contracted = Object.assign({ mapping: null }, contractedBase);
-      const msg = invalidMsg(state.invalid) || (exp && !exp.ok ? 'Pole expansion failed: ' + exp.msg : '');
-      setMsg(msg, true);
+      const msg = (exp && !exp.ok) ? 'Pole expansion failed: ' + exp.msg : '';
+      setMsg(msg, !!msg);
       afterNewPoly(true);
     }
   }
@@ -148,7 +155,7 @@
   // contract forward via poleContract, which handles pentagon-pentagon adjacency directly
   // and hands back both the C(n) result and the fullerene<->C(n) vertex mapping, so the
   // "contract poles" toggle works exactly as it does for admissible isomers.
-  function generateFromFullerene(n, entry) {
+  function generateFromFullerene(n, entry, wantContracted) {
     const fVerts = entry.verts.map(([x, y, z]) => new THREE.Vector3(x, y, z));
     const fullerene = { verts: fVerts, faces: entry.faces.map(f => f.slice()) };
     Geo.fixOrientationConsistency(fullerene);
@@ -171,8 +178,9 @@
       poleCount: cr.poleCount, keptCount: cr.keptCount, poleIndices: computePoleIndices(cr.poly),
       anomalousPoles: cr.anomalousPoles || [], inv, fvC, fsv, sumCheck
     };
-    setMsg(invalidMsg(state.invalid), true);
-    afterNewPoly(false);
+    // Admissibility (if any) is shown once, in the readout's "Admissible?" row — not here too.
+    setMsg('', false);
+    afterNewPoly(wantContracted);
   }
 
   function countFaceTypes(poly) {
@@ -308,6 +316,14 @@
     $('nSlider').value = n;
     $('nInput').value = n;
     updateNAvailability();
+    updateGenerateDirty();
+  }
+
+  // Flags the Generate button whenever the slider/input value has moved away from
+  // whatever n is actually on screen, so it's clear a click is needed to see a change.
+  function updateGenerateDirty() {
+    const btn = $('generateBtn');
+    btn.classList.toggle('dirty', state.n !== lastGeneratedN && !btn.disabled);
   }
 
   // ---------------------------------------------------------------------------
@@ -348,7 +364,10 @@
   }
 
   function main() {
-    Renderer.init($('c'));
+    if (!Renderer.init($('c'))) {
+      $('webglError').style.display = 'flex';
+      return;
+    }
     renderLegend();
 
     $('nSlider').addEventListener('input', e => setN(+e.target.value));

@@ -67,15 +67,23 @@
   let camDistance = 3.4;
   let toggles = { color: true, edges: true, sphere: false, poles: false, spin: false, highlightIsolatedHex: true };
 
+  // Returns true on success, false if a WebGL context couldn't be created (e.g. WebGL
+  // disabled in the browser) — THREE.WebGLRenderer throws in that case rather than
+  // failing gracefully, so the caller needs a way to find out without a crash.
   function init(canvasEl) {
     canvas = canvasEl;
+    try {
+      rendererGL = new THREE.WebGLRenderer({ canvas, antialias: true });
+    } catch (e) {
+      return false;
+    }
+
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0xf7f6f3);
 
     camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
     camera.position.set(0, 0, camDistance);
 
-    rendererGL = new THREE.WebGLRenderer({ canvas, antialias: true });
     rendererGL.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
     world = new THREE.Group();
@@ -108,6 +116,7 @@
     canvas.addEventListener('touchstart', onTouchStart, { passive: true });
     window.addEventListener('touchmove', onTouchMove, { passive: false });
     window.addEventListener('touchend', () => { dragging = false; });
+    return true;
   }
 
   function resize() {
